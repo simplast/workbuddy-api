@@ -1,0 +1,20 @@
+{
+  "name": "workbuddy-api",
+  "version": "1.0.0",
+  "description": "CodeBuddy local API proxy via Vercel AI SDK",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.71",
+    "ai": "^6.0.203",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  }
+}
