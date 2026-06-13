@@ -10,6 +10,20 @@ export const config = {
   host: process.env.HOST || '127.0.0.1',
   // 默认模型
   defaultModel: process.env.DEFAULT_MODEL || 'default-model',
+
+  // ── NVIDIA API (compact 模型代理) ──
+  nvidia: {
+    baseURL: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
+    apiKey: process.env.NVIDIA_API_KEY || '',
+    models: (process.env.NVIDIA_MODELS || 'z-ai/glm-5.1').split(',').map(s => s.trim()),
+    // 模型名映射：请求中的别名 → NVIDIA 真实模型名
+    modelMap: Object.fromEntries(
+      (process.env.NVIDIA_MODELS || 'z-ai/glm-5.1').split(',').map(s => {
+        const m = s.trim();
+        return [m, m.includes('/') ? m : process.env.NVIDIA_TARGET_MODEL || 'z-ai/glm-5.1'];
+      })
+    ),
+  },
 };
 
 if (!config.apiKey) {
