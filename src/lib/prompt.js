@@ -26,7 +26,7 @@ export function replaceSystemPrompt(messages) {
   if (!prompt || !messages) return messages;
   const sysIdx = messages.findIndex((m) => m.role === 'system');
   if (sysIdx >= 0) {
-    messages[sysIdx] = { role: 'system', content: prompt };
+    messages[sysIdx].content = prompt;
     console.log(`\x1b[36m[sys]\x1b[0m system prompt replaced (${prompt.length} chars)`);
   }
   return messages;

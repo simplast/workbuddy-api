@@ -4,17 +4,13 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { fetchUpstream } from '../lib/upstream.js';
 import { logRequest } from '../lib/logger.js';
-import { getCustomSystemPrompt, filterContentMessages } from '../lib/prompt.js';
+import { replaceSystemPrompt, filterContentMessages } from '../lib/prompt.js';
 import { anthropicToOpenAIMessages, anthropicToOpenAITools, mapToolChoice } from '../convert/anthropic.js';
 
 const LOG_DIR = path.resolve('logs');
 
 function msgId() {
   return 'msg_' + crypto.randomBytes(20).toString('hex');
-}
-
-function sse(obj) {
-  return `data: ${JSON.stringify(obj)}\n\n`;
 }
 
 function sseEvent(event, obj) {
@@ -58,13 +54,7 @@ export async function handleMessages(req, res) {
 
 // ─── 流式 Anthropic 响应 ───────────────────────────────────────────────
 async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) {
-  const customSystemPrompt = getCustomSystemPrompt();
-
-  if (customSystemPrompt) {
-    const sysIdx = upstreamBody.messages.findIndex(m => m.role === 'system');
-    if (sysIdx >= 0) upstreamBody.messages[sysIdx].content = customSystemPrompt;
-  }
-
+  replaceSystemPrompt(upstreamBody.messages);
   upstreamBody.messages = filterContentMessages(upstreamBody.messages);
 
   const id = msgId();
@@ -233,13 +223,7 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
 
 // ─── 非流式 Anthropic 响应 ─────────────────────────────────────────────
 async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model }) {
-  const customSystemPrompt = getCustomSystemPrompt();
-
-  if (customSystemPrompt) {
-    const sysIdx = upstreamBody.messages.findIndex(m => m.role === 'system');
-    if (sysIdx >= 0) upstreamBody.messages[sysIdx].content = customSystemPrompt;
-  }
-
+  replaceSystemPrompt(upstreamBody.messages);
   upstreamBody.messages = filterContentMessages(upstreamBody.messages);
 
   const id = msgId();

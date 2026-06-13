@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { config } from '../config.js';
 
@@ -9,10 +11,8 @@ let SDK_VERSION = '6.25.0';
 try {
   const raw = execSync('which codebuddy 2>/dev/null || which cbc 2>/dev/null', { encoding: 'utf8' }).trim();
   if (raw) {
-    const ver = execSync(
-      `node -e "const p=require('path');const f=require('fs');console.log(require(p.join(p.dirname(f.realpathSync('${raw}')),'..','package.json')).version)"`,
-      { encoding: 'utf8' }
-    ).trim();
+    const pkgPath = path.join(path.dirname(fs.realpathSync(raw)), '..', 'package.json');
+    const ver = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version;
     if (ver) CLI_VERSION = ver;
   }
 } catch (e) {
