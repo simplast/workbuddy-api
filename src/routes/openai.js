@@ -35,7 +35,7 @@ export async function handleChatCompletions(req, res) {
     const sys = msgs.find((m) => m.role === 'system');
     if (sys) {
       const preview = (typeof sys.content === 'string' ? sys.content : JSON.stringify(sys.content)).slice(0, 200);
-      console.log(`\x1b[33m[req dump]\x1b[0m system prompt ${sys.content?.length ?? 0} chars: ${preview}...`);
+      console.log(`\x1b[33m[req dump]\x1b[0m system prompt ${typeof sys.content === 'string' ? sys.content.length : JSON.stringify(sys.content).length} chars: ${preview}...`);
     }
     console.log(`\x1b[33m[req dump]\x1b[0m ${msgs.length} messages, ${upstreamBody.tools?.length ?? 0} tools → saved to logs/last-request.json`);
   } catch { /* ignore */ }

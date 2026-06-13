@@ -4,7 +4,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { fetchUpstream } from '../lib/upstream.js';
 import { logRequest } from '../lib/logger.js';
-import { getCustomSystemPrompt, filterContentMessages, FILTER_MARK } from '../lib/prompt.js';
+import { getCustomSystemPrompt, filterContentMessages } from '../lib/prompt.js';
 import { anthropicToOpenAIMessages, anthropicToOpenAITools, mapToolChoice } from '../convert/anthropic.js';
 
 const LOG_DIR = path.resolve('logs');
@@ -98,6 +98,7 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
   let textBlockIdx = -1;
   let textOpen = false;
   const toolMap = new Map();
+  let lastOi = 0;
   let finishReason = null;
   let usage = { input_tokens: 0, output_tokens: 0 };
   let lastDataTime = Date.now();
@@ -167,7 +168,8 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
             }
 
             for (const tc of delta.tool_calls) {
-              const oi = tc.index ?? 0;
+              const oi = tc.index ?? lastOi;
+              if (tc.index != null) lastOi = tc.index;
 
               if (!toolMap.has(oi)) {
                 const ai = nextBlockIdx++;
@@ -278,7 +280,7 @@ async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model 
             const idx = tc.index ?? toolCalls.length;
             if (!toolCalls[idx]) toolCalls[idx] = { id: tc.id || '', type: 'function', function: { name: '', arguments: '' } };
             if (tc.id) toolCalls[idx].id = tc.id;
-            if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
+            if (tc.function?.name && !toolCalls[idx].function.name) toolCalls[idx].function.name = tc.function.name;
             if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
           }
         }

@@ -15,6 +15,8 @@ export function resolveModel(model) {
   return model;
 }
 
+// Reserved for future request body sanitization (e.g. stripping unsupported fields).
+// Currently a pass-through; do NOT remove — fetchUpstream depends on the return value.
 export function sanitizeBody(body) {
   return body;
 }

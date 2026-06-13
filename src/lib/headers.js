@@ -15,7 +15,9 @@ try {
     ).trim();
     if (ver) CLI_VERSION = ver;
   }
-} catch { /* fallback */ }
+} catch (e) {
+  console.warn(`  [headers] Failed to detect CLI version, using fallback ${CLI_VERSION}: ${e.message}`);
+}
 
 export function hexId(len = 32) {
   return crypto.randomBytes(len / 2).toString('hex');

@@ -173,13 +173,16 @@ export function loadModels() {
 // ─── 带缓存的模型获取（文件变更时自动刷新） ────────────────────────────────
 let _cachedModels = null;
 let _lastLoadTime = 0;
+let _loadReturnedEmpty = false;
 const CACHE_TTL = 60_000; // 60 秒刷新
 
 export function getModels() {
   const now = Date.now();
-  if (!_cachedModels || now - _lastLoadTime > CACHE_TTL) {
+  // 加载失败（返回空）时不缓存，每次都重试
+  if (!_cachedModels || _loadReturnedEmpty || now - _lastLoadTime > CACHE_TTL) {
     _cachedModels = loadModels();
     _lastLoadTime = now;
+    _loadReturnedEmpty = _cachedModels.length === 0;
   }
   return _cachedModels;
 }
