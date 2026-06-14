@@ -132,7 +132,12 @@ export async function handleMessages(req, res) {
     cleanupDebugDir(DEBUG_DIR);
     fs.writeFileSync(path.join(DEBUG_DIR, `anthropic-${requestId}.json`), JSON.stringify({ id: requestId, request: upstreamBody }, null, 2));
     fs.writeFileSync(path.join(LOG_DIR, 'last-request-anthropic.json'), JSON.stringify({ id: requestId, request: upstreamBody }, null, 2));
-    console.log(`\x1b[33m[req dump]\x1b[0m ${upstreamBody.messages.length} messages, ${upstreamBody.tools?.length ?? 0} tools → saved to logs/last-request-anthropic.json (id=${requestId})`);
+    const topKeys = {};
+    for (const k of Object.keys(upstreamBody)) {
+      if (k === 'messages' || k === 'tools') continue;
+      topKeys[k] = upstreamBody[k];
+    }
+    console.log(`\x1b[33m[req dump]\x1b[0m ${upstreamBody.messages.length} messages, ${upstreamBody.tools?.length ?? 0} tools, top-keys: ${JSON.stringify(topKeys)} → saved (id=${requestId})`);
   } catch {}
 
   if (body.stream === true) {

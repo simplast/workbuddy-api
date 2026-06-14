@@ -23,6 +23,7 @@ export async function handleChatCompletions(req, res) {
     ...req.body,
     model: reqModel,
     stream: true,
+    stream_options: { include_usage: true },
   };
 
   // Normalize format (fix non-standard array content in assistant messages)
@@ -46,7 +47,16 @@ export async function handleChatCompletions(req, res) {
       const preview = (typeof sys.content === 'string' ? sys.content : JSON.stringify(sys.content)).slice(0, 200);
       console.log(`\x1b[33m[req dump]\x1b[0m system prompt ${typeof sys.content === 'string' ? sys.content.length : JSON.stringify(sys.content).length} chars: ${preview}...`);
     }
-    console.log(`\x1b[33m[req dump]\x1b[0m ${msgs.length} messages, ${upstreamBody.tools?.length ?? 0} tools → saved to logs/last-request.json (id=${requestId})`);
+    // 记录 ccswitch 传来的顶层参数（排查 thinking/reasoning_effort 丢失问题）
+    const topKeys = {};
+    for (const k of Object.keys(upstreamBody)) {
+      if (k === 'messages' || k === 'tools') continue;
+      topKeys[k] = upstreamBody[k];
+    }
+    console.log(`\x1b[33m[req dump]\x1b[0m ${msgs.length} messages, ${upstreamBody.tools?.length ?? 0} tools, top-keys: ${JSON.stringify(topKeys)} → saved (id=${requestId})`);
+    if (upstreamBody.reasoning_effort) {
+      console.log(`\x1b[36m[openai]\x1b[0m reasoning_effort=${upstreamBody.reasoning_effort} → upstream`);
+    }
   } catch { /* ignore */ }
 
   try {
@@ -281,7 +291,8 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
     const tcSummary = _toolCalls.length > 0
       ? _toolCalls.map((tc) => tc.function.name).join(', ')
       : '(none)';
-    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${_finishReason} content=${_fullContent.length}chars tool_calls=[${tcSummary}] → saved to logs/last-response.json (id=${requestId})`);
+    const reasoningSummary = _fullReasoning.length > 0 ? ` reasoning=${_fullReasoning.length}chars` : '';
+    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${_finishReason} content=${_fullContent.length}chars${reasoningSummary} tool_calls=[${tcSummary}] → saved to logs/last-response.json (id=${requestId})`);
   } catch { /* ignore */ }
 
   logRequest({ model: streamModel, startTime, usage: streamUsage });

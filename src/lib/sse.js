@@ -60,7 +60,7 @@ export async function readSSEStream(reader, { onChunk, onDone, onError, timeoutM
 
 /**
  * Aggregate SSE chunks into a complete response object.
- * Returns { fullContent, fullReasoning, toolCalls, lastChunk, id, model, created }.
+ * Returns { fullContent, fullReasoning, toolCalls, lastChunk, id, model, created, usage }.
  */
 export function aggregateSSEChunks() {
   let fullContent = '';
@@ -70,12 +70,14 @@ export function aggregateSSEChunks() {
   let id = '';
   let model = '';
   let created = 0;
+  let usage = null;
 
   const handleChunk = (parsed) => {
     lastChunk = parsed;
     if (parsed.id) id = parsed.id;
     if (parsed.model) model = parsed.model;
     if (typeof parsed.created === 'number') created = parsed.created;
+    if (parsed.usage) usage = parsed.usage;
 
     const choice = parsed.choices?.[0];
     if (!choice) return;
@@ -105,6 +107,7 @@ export function aggregateSSEChunks() {
     id,
     model,
     created,
+    usage,
   });
 
   return { handleChunk, getResult };
