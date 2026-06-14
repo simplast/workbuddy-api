@@ -37,8 +37,13 @@ app.post('/v1/chat/completions', handleChatCompletions);
 // Anthropic Messages API
 app.post('/v1/messages', handleMessages);
 
-// 404 fallback
-app.use((_req, res) => {
+// 405 for known paths with wrong method, 404 for unknown
+app.use((req, res) => {
+  const knownPaths = ['/v1/chat/completions', '/v1/messages'];
+  if (knownPaths.includes(req.path) && req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: { message: `Method ${req.method} not allowed on ${req.path}` } });
+  }
   res.status(404).json({ error: { message: 'Use POST /v1/chat/completions, POST /v1/messages, or GET /v1/models' } });
 });
 

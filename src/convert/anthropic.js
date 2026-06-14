@@ -122,8 +122,17 @@ export function anthropicToOpenAIMessages(body) {
         messages.push(m);
       }
     }
-    // Other roles (tool, system) — pass through as-is
+    // Other roles (tool, system) — strip cache_control at block level
     else {
+      if (Array.isArray(cleanedMsg.content)) {
+        cleanedMsg.content = cleanedMsg.content.map((b) => {
+          if (b && typeof b === 'object') {
+            const { cache_control, ...rest } = b;
+            return rest;
+          }
+          return b;
+        });
+      }
       messages.push(cleanedMsg);
     }
   }
@@ -136,6 +145,11 @@ export function anthropicToOpenAIMessages(body) {
  */
 export function anthropicToOpenAITools(tools) {
   if (!tools || !Array.isArray(tools)) return undefined;
+  const skipped = tools.filter(t => t.type && t.type !== 'custom');
+  if (skipped.length > 0) {
+    const types = skipped.map(t => t.type).join(', ');
+    console.warn(`\x1b[33m[tools]\x1b[0m dropped ${skipped.length} non-custom tool(s) (type=${types}); only custom tools are supported`);
+  }
   return tools
     .filter(t => !t.type || t.type === 'custom')
     .map(t => {
@@ -187,12 +201,18 @@ export function prepareUpstreamBody(body, openaiMessages, openaiTools) {
 
   // Anthropic thinking config → upstream
   // Anthropic: { thinking: { type: "enabled", budget_tokens: N } }
-  // Some OpenAI-compatible providers support: { reasoning_effort: "low|medium|high" }
-  // CodeBuddy upstream doesn't have a standard mapping, so we just note it
+  // Map budget_tokens to OpenAI-style reasoning_effort so upstream models
+  // that support it (z-ai/glm, etc.) can honor the budget.
   if (body.thinking?.type === 'enabled') {
-    console.log(`\x1b[36m[anthropic]\x1b[0m thinking enabled (budget_tokens=${body.thinking.budget_tokens}) — forwarded as reasoning request`);
-    // Don't add thinking param to upstream — it's not standard OpenAI
-    // The upstream model may still return reasoning_content on its own
+    const budget = body.thinking.budget_tokens;
+    let effort = 'medium';
+    if (typeof budget === 'number') {
+      if (budget <= 2048) effort = 'low';
+      else if (budget <= 8192) effort = 'medium';
+      else effort = 'high';
+    }
+    upstreamBody.reasoning_effort = effort;
+    console.log(`\x1b[36m[anthropic]\x1b[0m thinking enabled (budget_tokens=${budget}) → reasoning_effort=${effort}`);
   }
 
   return upstreamBody;

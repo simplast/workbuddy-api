@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { buildCliHeaders } from './headers.js';
+import { nvidiaLimiter } from './rate-limit.js';
 
 export const UPSTREAM = `${config.baseURL}/v2/chat/completions`;
 export const NVIDIA_UPSTREAM = `${config.nvidia.baseURL}/chat/completions`;
@@ -28,10 +29,12 @@ export async function fetchUpstream(body) {
   cleanBody.model = resolveModel(body.model);
 
   if (isNvidia) {
+    // Apply rate limiting for NVIDIA API
+    await nvidiaLimiter.acquire();
     console.log(`\x1b[35m[nvidia]\x1b[0m model=${cleanBody.model} → ${NVIDIA_UPSTREAM}`);
   }
 
-  return fetch(targetUrl, {
+  const response = await fetch(targetUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -40,4 +43,13 @@ export async function fetchUpstream(body) {
     },
     body: JSON.stringify(cleanBody),
   });
+
+  // Handle 429 for NVIDIA API
+  if (isNvidia && response.status === 429) {
+    nvidiaLimiter.on429();
+  } else if (isNvidia && response.ok) {
+    nvidiaLimiter.onSuccess();
+  }
+
+  return response;
 }

@@ -11,13 +11,14 @@ export async function readSSEStream(reader, { onChunk, onDone, onError, timeoutM
   const decoder = new TextDecoder();
   let buffer = '';
   let lastDataTime = Date.now();
+  let timedOut = false;
 
   const watchdog = setInterval(() => {
     if (Date.now() - lastDataTime > timeoutMs) {
       console.error(`[stream timeout] no data for ${timeoutMs}ms`);
+      timedOut = true;
       try { reader.cancel(); } catch {}
       clearInterval(watchdog);
-      onError?.(new Error('Stream timeout'));
     }
   }, 10_000);
 
@@ -33,8 +34,9 @@ export async function readSSEStream(reader, { onChunk, onDone, onError, timeoutM
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed.startsWith('data: ')) continue;
-        const data = trimmed.slice(6);
+        const dataMatch = trimmed.match(/^data:\s?(.*)$/);
+        if (!dataMatch) continue;
+        const data = dataMatch[1];
         if (data === '[DONE]') {
           onDone?.();
           continue;
@@ -45,8 +47,12 @@ export async function readSSEStream(reader, { onChunk, onDone, onError, timeoutM
         } catch { /* skip malformed chunks */ }
       }
     }
+    if (timedOut) onError?.(new Error('Stream timeout'));
   } catch (e) {
-    onError?.(e);
+    // reader.cancel() from the watchdog surfaces here as an AbortError.
+    // Report the timeout once; suppress the duplicate cancel-induced rejection.
+    if (!timedOut) onError?.(e);
+    else onError?.(new Error('Stream timeout'));
   } finally {
     clearInterval(watchdog);
   }
@@ -67,9 +73,9 @@ export function aggregateSSEChunks() {
 
   const handleChunk = (parsed) => {
     lastChunk = parsed;
-    id = parsed.id || id;
-    model = parsed.model || model;
-    created = parsed.created || created;
+    if (parsed.id) id = parsed.id;
+    if (parsed.model) model = parsed.model;
+    if (typeof parsed.created === 'number') created = parsed.created;
 
     const choice = parsed.choices?.[0];
     if (!choice) return;

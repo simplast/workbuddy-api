@@ -2,6 +2,13 @@ import 'dotenv/config';
 
 const nvidiaModels = (process.env.NVIDIA_MODELS || 'z-ai/glm-5.1').split(',').map(s => s.trim());
 
+// If the alias is already a fully-qualified name (contains '/'), use it as-is.
+// Otherwise resolve via NVIDIA_TARGET_MODEL (default: 'z-ai/glm-5.1').
+function resolveNvidiaTarget(alias) {
+  if (alias.includes('/')) return alias;
+  return process.env.NVIDIA_TARGET_MODEL || 'z-ai/glm-5.1';
+}
+
 export const config = {
   // CodeBuddy API Key (Bearer token)
   apiKey: process.env.CODEBUDDY_API_KEY || '',
@@ -19,9 +26,12 @@ export const config = {
     apiKey: process.env.NVIDIA_API_KEY || '',
     models: nvidiaModels,
     // 模型名映射：请求中的别名 → NVIDIA 真实模型名
-    modelMap: Object.fromEntries(
-      nvidiaModels.map(m => [m, m.includes('/') ? m : process.env.NVIDIA_TARGET_MODEL || 'z-ai/glm-5.1'])
-    ),
+    modelMap: Object.fromEntries(nvidiaModels.map(m => [m, resolveNvidiaTarget(m)])),
+    // 速率限制（NVIDIA free tier 通常是 40 rpm）
+    rateLimit: {
+      rpm: parseInt(process.env.NVIDIA_RPM || '40', 10),
+      burst: parseInt(process.env.NVIDIA_BURST || '5', 10),
+    },
   },
 };
 

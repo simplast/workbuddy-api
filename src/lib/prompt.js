@@ -28,6 +28,9 @@ export function replaceSystemPrompt(messages) {
   if (sysIdx >= 0) {
     messages[sysIdx].content = prompt;
     console.log(`\x1b[36m[sys]\x1b[0m system prompt replaced (${prompt.length} chars)`);
+  } else {
+    messages.unshift({ role: 'system', content: prompt });
+    console.log(`\x1b[36m[sys]\x1b[0m system prompt inserted (${prompt.length} chars)`);
   }
   return messages;
 }

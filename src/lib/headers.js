@@ -5,18 +5,25 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { config } from '../config.js';
 
-// ─── CLI 版本 & SDK 信息 ────────────────────────────────────────────────────
-let CLI_VERSION = '2.106.1';
-let SDK_VERSION = '6.25.0';
-try {
-  const raw = execSync('which codebuddy 2>/dev/null || which cbc 2>/dev/null', { encoding: 'utf8' }).trim();
-  if (raw) {
-    const pkgPath = path.join(path.dirname(fs.realpathSync(raw)), '..', 'package.json');
-    const ver = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version;
-    if (ver) CLI_VERSION = ver;
+// ─── CLI 版本 & SDK 信息 (懒加载：首次调用时探测) ─────────────────────
+const FALLBACK_CLI_VERSION = '2.106.1';
+let CLI_VERSION = FALLBACK_CLI_VERSION;
+let _cliVersionDetected = false;
+const SDK_VERSION = '6.25.0';
+
+function detectCliVersion() {
+  if (_cliVersionDetected) return;
+  _cliVersionDetected = true;
+  try {
+    const raw = execSync('which codebuddy 2>/dev/null || which cbc 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (raw) {
+      const pkgPath = path.join(path.dirname(fs.realpathSync(raw)), '..', 'package.json');
+      const ver = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version;
+      if (ver) CLI_VERSION = ver;
+    }
+  } catch (e) {
+    console.warn(`  [headers] Failed to detect CLI version, using fallback ${CLI_VERSION}: ${e.message}`);
   }
-} catch (e) {
-  console.warn(`  [headers] Failed to detect CLI version, using fallback ${CLI_VERSION}: ${e.message}`);
 }
 
 export function hexId(len = 32) {
@@ -24,6 +31,7 @@ export function hexId(len = 32) {
 }
 
 export function buildCliHeaders(model) {
+  detectCliVersion();
   const conversationId = crypto.randomUUID();
   const requestId = hexId(32);
   const messageId = hexId(32);
@@ -31,7 +39,7 @@ export function buildCliHeaders(model) {
   const spanId = hexId(16);
   const parentSpanId = hexId(16);
 
-  const userIdSuffix = config.apiKey.slice(-8);
+  const userIdSuffix = config.apiKey.length >= 8 ? config.apiKey.slice(-8) : '00000000';
   const userId = `anonymous_${userIdSuffix}`;
 
   const platform = os.platform();

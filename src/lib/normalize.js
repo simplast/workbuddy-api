@@ -32,7 +32,9 @@ export function normalizeOpenAIMessages(messages) {
       .map((b) => b.text)
       .join('');
 
-    msg.content = text || null;
+    // Preserve empty string (vs. null) so downstream can distinguish
+    // "assistant said nothing" from "no content field at all"
+    msg.content = text;
     fixed++;
   }
 

@@ -6,8 +6,10 @@ import { fetchUpstream } from '../lib/upstream.js';
 import { logRequest } from '../lib/logger.js';
 import { replaceSystemPrompt, filterContentMessages } from '../lib/prompt.js';
 import { anthropicToOpenAIMessages, anthropicToOpenAITools, prepareUpstreamBody } from '../convert/anthropic.js';
+import { cleanupDebugDir } from '../lib/debug-cleanup.js';
 
 const LOG_DIR = path.resolve('logs');
+const DEBUG_DIR = path.join(LOG_DIR, 'requests');
 
 /**
  * OpenAI finish_reason → Anthropic stop_reason mapping.
@@ -53,7 +55,7 @@ function sseEvent(event, obj) {
  * This function extracts those and returns { cleanText, parsedToolCalls }.
  */
 function extractPseudoXMLToolCalls(text) {
-  if (!text || !text.includes('<tool_calls>') && !text.includes('<invoke')) {
+  if (!text || (!text.includes('<tool_calls>') && !text.includes('<invoke') && !text.includes('<tool_call'))) {
     return { cleanText: text, parsedToolCalls: [] };
   }
 
@@ -123,24 +125,34 @@ export async function handleMessages(req, res) {
   replaceSystemPrompt(upstreamBody.messages);
   upstreamBody.messages = filterContentMessages(upstreamBody.messages);
 
-  // Debug dump
+  // Debug dump (per-request to avoid concurrent overwrite)
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   try {
-    fs.writeFileSync(path.join(LOG_DIR, 'last-request-anthropic.json'), JSON.stringify(upstreamBody, null, 2));
-    console.log(`\x1b[33m[req dump]\x1b[0m ${upstreamBody.messages.length} messages, ${upstreamBody.tools?.length ?? 0} tools → saved to logs/last-request-anthropic.json`);
+    if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
+    cleanupDebugDir(DEBUG_DIR);
+    fs.writeFileSync(path.join(DEBUG_DIR, `anthropic-${requestId}.json`), JSON.stringify({ id: requestId, request: upstreamBody }, null, 2));
+    fs.writeFileSync(path.join(LOG_DIR, 'last-request-anthropic.json'), JSON.stringify({ id: requestId, request: upstreamBody }, null, 2));
+    console.log(`\x1b[33m[req dump]\x1b[0m ${upstreamBody.messages.length} messages, ${upstreamBody.tools?.length ?? 0} tools → saved to logs/last-request-anthropic.json (id=${requestId})`);
   } catch {}
 
   if (body.stream === true) {
-    return streamAnthropicResponse({ upstreamBody, res, startTime, model });
+    return streamAnthropicResponse({ upstreamBody, res, startTime, model, requestId, debugDir: DEBUG_DIR });
   } else {
-    return nonStreamAnthropicResponse({ upstreamBody, res, startTime, model });
+    return nonStreamAnthropicResponse({ upstreamBody, res, startTime, model, requestId, debugDir: DEBUG_DIR });
   }
 }
 
 // ─── 流式 Anthropic 响应 ───────────────────────────────────────────────
-async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) {
+async function streamAnthropicResponse({ upstreamBody, res, startTime, model, requestId, debugDir }) {
   const id = msgId();
 
-  const upstream = await fetchUpstream(upstreamBody);
+  let upstream;
+  try {
+    upstream = await fetchUpstream(upstreamBody);
+  } catch (err) {
+    console.error('[anthropic fetch error]', err?.message || err);
+    return res.status(502).json({ type: 'error', error: { type: 'api_error', message: err?.message || 'Upstream fetch failed' } });
+  }
   if (!upstream.ok) {
     const errText = await upstream.text();
     return res.status(upstream.status).json({ type: 'error', error: { type: 'api_error', message: errText } });
@@ -164,6 +176,14 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let aborted = false;
+
+  // Propagate client disconnect upstream
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    aborted = true;
+    try { reader.cancel(); } catch {}
+  });
 
   // Block state machine:
   // Anthropic content blocks come in order: thinking → text → tool_use
@@ -178,9 +198,6 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
   let _fullContent = '';
   let _fullReasoning = '';
   let lastDataTime = Date.now();
-
-  // Buffer for pseudo-XML tool call detection at stream end
-  let _pseudoXMLBuffer = '';
 
   function closeCurrentBlock() {
     if (currentBlockType) {
@@ -214,9 +231,8 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
   const watchdog = setInterval(() => {
     if (Date.now() - lastDataTime > TIMEOUT) {
       console.error('[anthropic timeout]');
+      aborted = true;
       try { reader.cancel(); } catch {}
-      res.write(sseEvent('message_stop', { type: 'message_stop' }));
-      res.end();
       clearInterval(watchdog);
     }
   }, 10_000);
@@ -233,8 +249,9 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
 
       for (const line of lines) {
         const t = line.trim();
-        if (!t.startsWith('data: ')) continue;
-        const d = t.slice(6);
+        const dataMatch = t.match(/^data:\s?(.*)$/);
+        if (!dataMatch) continue;
+        const d = dataMatch[1];
         if (d === '[DONE]') continue;
 
         try {
@@ -265,7 +282,6 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
           // ── text content → text block ──
           if (delta.content) {
             _fullContent += delta.content;
-            _pseudoXMLBuffer += delta.content;  // accumulate for pseudo-XML detection
             if (currentBlockType !== 'text') {
               openBlock('text');
             }
@@ -321,57 +337,42 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
   // Close any open text/thinking block
   closeCurrentBlock();
 
-  // ── Post-stream: detect pseudo-XML tool calls in accumulated text ──
-  const { cleanText, parsedToolCalls } = extractPseudoXMLToolCalls(_pseudoXMLBuffer);
-  for (const tc of parsedToolCalls) {
-    const ai = nextBlockIdx++;
-    res.write(sseEvent('content_block_start', {
-      type: 'content_block_start',
-      index: ai,
-      content_block: { type: 'tool_use', id: tc.id, name: tc.name, input: {} },
-    }));
-    res.write(sseEvent('content_block_delta', {
-      type: 'content_block_delta',
-      index: ai,
-      delta: { type: 'input_json_delta', partial_json: JSON.stringify(tc.input) },
-    }));
-    res.write(sseEvent('content_block_stop', { type: 'content_block_stop', index: ai }));
-  }
-
-  // If we parsed pseudo-XML tool calls, override the stop reason to tool_use
-  // (unless there were also structured tool_calls already)
-  let stopReason = mapStopReason(finishReason);
-  if (parsedToolCalls.length > 0 && toolMap.size === 0) {
-    // The model outputted tool calls as text instead of structured format
-    // Force stop_reason = tool_use so Claude Code knows there are tool calls
-    stopReason = 'tool_use';
-    console.log(`\x1b[36m[pseudo-xml]\x1b[0m overriding stop_reason to "tool_use" (detected pseudo-XML tool calls)`);
-  }
+  // ── Post-stream: pseudo-XML tool call detection is disabled in streaming
+  // mode. The raw text_delta (which may contain pseudo-XML tags) has already
+  // been emitted to the client, so re-emitting the same content as structured
+  // tool_use blocks would duplicate model output. Detection only runs in the
+  // non-streaming handler below where we have full control over the response.
+  const stopReason = mapStopReason(finishReason);
 
   // Close all structured tool blocks
   for (const [, ai] of toolMap) {
     res.write(sseEvent('content_block_stop', { type: 'content_block_stop', index: ai }));
   }
 
-  res.write(sseEvent('message_delta', {
-    type: 'message_delta',
-    delta: { stop_reason: stopReason, stop_sequence: null },
-    usage: { output_tokens: usage.output_tokens },
-  }));
+  if (!aborted) {
+    res.write(sseEvent('message_delta', {
+      type: 'message_delta',
+      delta: { stop_reason: stopReason, stop_sequence: null },
+      usage: { output_tokens: usage.output_tokens },
+    }));
 
-  res.write(sseEvent('message_stop', { type: 'message_stop' }));
+    res.write(sseEvent('message_stop', { type: 'message_stop' }));
+  }
   res.end();
+
+  // In streaming mode we don't run pseudo-XML detection (see comment above).
+  const parsedToolCallsCount = 0;
 
   // ── save debug response log ──
   try {
-    const totalToolCalls = toolMap.size + parsedToolCalls.length;
+    const totalToolCalls = toolMap.size + parsedToolCallsCount;
     const debugResp = {
       id, model, stop_reason: stopReason,
       raw_finish_reason: finishReason,
       content_text: _fullContent.length > 0 ? _fullContent.length + ' chars' : '(empty)',
       reasoning_text: _fullReasoning.length > 0 ? _fullReasoning.length + ' chars' : '(none)',
       structured_tool_calls: toolMap.size,
-      pseudo_xml_tool_calls: parsedToolCalls.length,
+      pseudo_xml_tool_calls: parsedToolCallsCount,
       total_tool_calls: totalToolCalls,
       usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
     };
@@ -381,21 +382,25 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
         debugResp.tool_calls.push({ openai_index: oi, anthropic_index: ai });
       }
     }
-    if (parsedToolCalls.length > 0) {
-      debugResp.pseudo_xml_tool_calls_detail = parsedToolCalls.map(tc => ({ name: tc.name }));
-    }
-    fs.writeFileSync(path.join(LOG_DIR, 'last-response-anthropic.json'), JSON.stringify(debugResp, null, 2));
-    console.log(`\x1b[33m[anthropic resp]\x1b[0m stop_reason=${stopReason} (raw=${finishReason}) content=${_fullContent.length}chars reasoning=${_fullReasoning.length}chars structured_tools=${toolMap.size} pseudo_xml_tools=${parsedToolCalls.length} → saved to logs/last-response-anthropic.json`);
+    fs.writeFileSync(path.join(debugDir, `anthropic-${requestId}-resp.json`), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
+    fs.writeFileSync(path.join(LOG_DIR, 'last-response-anthropic.json'), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
+    console.log(`\x1b[33m[anthropic resp]\x1b[0m stop_reason=${stopReason} (raw=${finishReason}) content=${_fullContent.length}chars reasoning=${_fullReasoning.length}chars structured_tools=${toolMap.size} → saved to logs/last-response-anthropic.json (id=${requestId})`);
   } catch { /* ignore */ }
 
   logRequest({ model, startTime, usage: { prompt_tokens: usage.input_tokens, completion_tokens: usage.output_tokens, total_tokens: usage.input_tokens + usage.output_tokens } });
 }
 
 // ─── 非流式 Anthropic 响应 ─────────────────────────────────────────────
-async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model }) {
+async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model, requestId, debugDir }) {
   const id = msgId();
 
-  const upstream = await fetchUpstream(upstreamBody);
+  let upstream;
+  try {
+    upstream = await fetchUpstream(upstreamBody);
+  } catch (err) {
+    console.error('[anthropic fetch error]', err?.message || err);
+    return res.status(502).json({ type: 'error', error: { type: 'api_error', message: err?.message || 'Upstream fetch failed' } });
+  }
   if (!upstream.ok) {
     const errText = await upstream.text();
     return res.status(upstream.status).json({ type: 'error', error: { type: 'api_error', message: errText } });
@@ -417,8 +422,9 @@ async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model 
     buf = lines.pop() || '';
     for (const line of lines) {
       const t = line.trim();
-      if (!t.startsWith('data: ')) continue;
-      const d = t.slice(6);
+      const dataMatch = t.match(/^data:\s?(.*)$/);
+      if (!dataMatch) continue;
+      const d = dataMatch[1];
       if (d === '[DONE]') continue;
       try {
         const parsed = JSON.parse(d);
@@ -488,8 +494,9 @@ async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model 
     if (parsedToolCalls.length > 0) {
       debugResp.pseudo_xml_tool_calls_detail = parsedToolCalls.map(tc => ({ name: tc.name }));
     }
-    fs.writeFileSync(path.join(LOG_DIR, 'last-response-anthropic.json'), JSON.stringify(debugResp, null, 2));
-    console.log(`\x1b[33m[anthropic resp]\x1b[0m stop_reason=${stopReason} (raw=${fr}) content=${fullContent.length}chars reasoning=${fullReasoning.length}chars structured_tools=${toolCalls.length} pseudo_xml_tools=${parsedToolCalls.length} → saved to logs/last-response-anthropic.json`);
+    fs.writeFileSync(path.join(debugDir, `anthropic-${requestId}-resp.json`), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
+    fs.writeFileSync(path.join(LOG_DIR, 'last-response-anthropic.json'), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
+    console.log(`\x1b[33m[anthropic resp]\x1b[0m stop_reason=${stopReason} (raw=${fr}) content=${fullContent.length}chars reasoning=${fullReasoning.length}chars structured_tools=${toolCalls.length} pseudo_xml_tools=${parsedToolCalls.length} → saved to logs/last-response-anthropic.json (id=${requestId})`);
   } catch { /* ignore */ }
 
   logRequest({ model, startTime, usage: lastChunk?.usage });

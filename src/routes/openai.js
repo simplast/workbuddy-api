@@ -6,8 +6,10 @@ import { logRequest } from '../lib/logger.js';
 import { replaceSystemPrompt, filterContentMessages } from '../lib/prompt.js';
 import { normalizeOpenAIMessages } from '../lib/normalize.js';
 import { readSSEStream, aggregateSSEChunks } from '../lib/sse.js';
+import { cleanupDebugDir } from '../lib/debug-cleanup.js';
 
 const LOG_DIR = path.resolve('logs');
+const DEBUG_DIR = path.join(LOG_DIR, 'requests');
 
 /**
  * POST /v1/chat/completions — OpenAI-compatible endpoint
@@ -31,16 +33,20 @@ export async function handleChatCompletions(req, res) {
     upstreamBody.messages = filterContentMessages(upstreamBody.messages);
   }
 
-  // Debug dump
+  // Debug dump (per-request to avoid concurrent overwrite)
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   try {
-    fs.writeFileSync(path.join(LOG_DIR, 'last-request.json'), JSON.stringify(upstreamBody, null, 2));
+    if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
+    cleanupDebugDir(DEBUG_DIR);
+    fs.writeFileSync(path.join(DEBUG_DIR, `openai-${requestId}.json`), JSON.stringify({ id: requestId, request: upstreamBody }, null, 2));
+    fs.writeFileSync(path.join(LOG_DIR, 'last-request.json'), JSON.stringify({ id: requestId, request: upstreamBody }, null, 2));
     const msgs = upstreamBody.messages || [];
     const sys = msgs.find((m) => m.role === 'system');
     if (sys) {
       const preview = (typeof sys.content === 'string' ? sys.content : JSON.stringify(sys.content)).slice(0, 200);
       console.log(`\x1b[33m[req dump]\x1b[0m system prompt ${typeof sys.content === 'string' ? sys.content.length : JSON.stringify(sys.content).length} chars: ${preview}...`);
     }
-    console.log(`\x1b[33m[req dump]\x1b[0m ${msgs.length} messages, ${upstreamBody.tools?.length ?? 0} tools → saved to logs/last-request.json`);
+    console.log(`\x1b[33m[req dump]\x1b[0m ${msgs.length} messages, ${upstreamBody.tools?.length ?? 0} tools → saved to logs/last-request.json (id=${requestId})`);
   } catch { /* ignore */ }
 
   try {
@@ -52,9 +58,9 @@ export async function handleChatCompletions(req, res) {
     }
 
     if (wantStream) {
-      return pipeStreamResponse({ res, upstream, upstreamBody, startTime });
+      return pipeStreamResponse({ res, upstream, upstreamBody, startTime, requestId, debugDir: DEBUG_DIR });
     } else {
-      return aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime });
+      return aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime, requestId, debugDir: DEBUG_DIR });
     }
   } catch (err) {
     console.error('[proxy error]', err?.message || err);
@@ -63,7 +69,7 @@ export async function handleChatCompletions(req, res) {
 }
 
 // ─── 流式：直接透传 SSE，同时采集 usage ─────────────────────────────────
-async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
+async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requestId, debugDir }) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -78,6 +84,14 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
   let streamModel = upstreamBody.model;
   let sentDone = false;
   let lastDataTime = Date.now();
+  let aborted = false;
+
+  // Propagate client disconnect upstream
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    aborted = true;
+    try { reader.cancel(); } catch {}
+  });
 
   /**
    * Keep the public OpenAI endpoint OpenAI-shaped.
@@ -130,9 +144,8 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
   const watchdog = setInterval(() => {
     if (Date.now() - lastDataTime > STREAM_TIMEOUT) {
       console.error(`[stream timeout] no data for ${STREAM_TIMEOUT}ms`);
+      aborted = true;
       try { reader.cancel(); } catch {}
-      if (!sentDone) { writeDataEvent('[DONE]'); sentDone = true; }
-      res.end();
       clearInterval(watchdog);
     }
   }, 10_000);
@@ -157,12 +170,13 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
         if (!trimmed) {
           continue;
         }
-        if (!trimmed.startsWith('data: ')) {
+        const dataMatch = trimmed.match(/^data:\s?(.*)$/);
+        if (!dataMatch) {
           res.write(`${line}\n`);
           continue;
         }
 
-        const dataStr = line.slice(6);  // strip "data: "
+        const dataStr = dataMatch[1];
 
         if (dataStr === '[DONE]') {
           sentDone = true;
@@ -179,8 +193,9 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
       streamBuf = sseLines.pop() || '';
       for (const sl of sseLines) {
         const t = sl.trim();
-        if (!t.startsWith('data: ')) continue;
-        const d = t.slice(6);
+        const dataMatch = t.match(/^data:\s?(.*)$/);
+        if (!dataMatch) continue;
+        const d = dataMatch[1];
         if (d === '[DONE]') continue;
         try {
           const p = JSON.parse(d);
@@ -211,11 +226,15 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
     // flush remaining pipeBuf
     if (pipeBuf.trim()) {
       const trimmed = pipeBuf.trim();
-      if (trimmed.startsWith('data: ') && trimmed.slice(6) !== '[DONE]') {
-        writeDataEvent(normalizeSSEData(trimmed.slice(6)));
-      } else if (trimmed === 'data: [DONE]') {
-        sentDone = true;
-        writeDataEvent('[DONE]');
+      const dataMatch = trimmed.match(/^data:\s?(.*)$/);
+      if (dataMatch) {
+        const dataStr = dataMatch[1];
+        if (dataStr === '[DONE]') {
+          sentDone = true;
+          writeDataEvent('[DONE]');
+        } else {
+          writeDataEvent(normalizeSSEData(dataStr));
+        }
       } else {
         res.write(pipeBuf);
       }
@@ -230,7 +249,7 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
     clearInterval(watchdog);
   }
 
-  if (!sentDone) { writeDataEvent('[DONE]'); }
+  if (!sentDone && !aborted) { writeDataEvent('[DONE]'); }
   res.end();
 
   // ── save aggregated response for debugging ──
@@ -255,20 +274,21 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
         return { id: tc.id, function: { name: tc.function.name, arguments: args } };
       });
     }
-    fs.writeFileSync(path.join(LOG_DIR, 'last-response.json'), JSON.stringify(debugResp, null, 2));
+    fs.writeFileSync(path.join(debugDir, `openai-${requestId}-resp.json`), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
+    fs.writeFileSync(path.join(LOG_DIR, 'last-response.json'), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
 
     // console summary
     const tcSummary = _toolCalls.length > 0
       ? _toolCalls.map((tc) => tc.function.name).join(', ')
       : '(none)';
-    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${_finishReason} content=${_fullContent.length}chars tool_calls=[${tcSummary}] → saved to logs/last-response.json`);
+    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${_finishReason} content=${_fullContent.length}chars tool_calls=[${tcSummary}] → saved to logs/last-response.json (id=${requestId})`);
   } catch { /* ignore */ }
 
   logRequest({ model: streamModel, startTime, usage: streamUsage });
 }
 
 // ─── 非流式：聚合 SSE chunks → 单个 JSON 响应 ──────────────────────────
-async function aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime }) {
+async function aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime, requestId, debugDir }) {
   const reader = upstream.body.getReader();
   const agg = aggregateSSEChunks();
 
@@ -312,12 +332,13 @@ async function aggregateNonStreamResponse({ res, upstream, upstreamBody, startTi
         return { id: tc.id, function: { name: tc.function.name, arguments: args } };
       });
     }
-    fs.writeFileSync(path.join(LOG_DIR, 'last-response.json'), JSON.stringify(debugResp, null, 2));
+    fs.writeFileSync(path.join(debugDir, `openai-${requestId}-resp.json`), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
+    fs.writeFileSync(path.join(LOG_DIR, 'last-response.json'), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
 
     const tcSummary = toolCalls.length > 0
       ? toolCalls.map((tc) => tc.function.name).join(', ')
       : '(none)';
-    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${finishReason} content=${(fullContent||'').length}chars tool_calls=[${tcSummary}] → saved to logs/last-response.json`);
+    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${finishReason} content=${(fullContent||'').length}chars tool_calls=[${tcSummary}] → saved to logs/last-response.json (id=${requestId})`);
   } catch { /* ignore */ }
 
   logRequest({ model, startTime, usage });

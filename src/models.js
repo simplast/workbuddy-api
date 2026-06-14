@@ -173,16 +173,30 @@ export function loadModels() {
 // ─── 带缓存的模型获取（文件变更时自动刷新） ────────────────────────────────
 let _cachedModels = null;
 let _lastLoadTime = 0;
-let _loadReturnedEmpty = false;
+let _lastEmptyLoadTime = 0;
 const CACHE_TTL = 60_000; // 60 秒刷新
+const EMPTY_BACKOFF = 60_000; // 空结果退避 60 秒，避免每次请求都重试 IO
 
 export function getModels() {
   const now = Date.now();
-  // 加载失败（返回空）时不缓存，每次都重试
-  if (!_cachedModels || _loadReturnedEmpty || now - _lastLoadTime > CACHE_TTL) {
+  const emptyBackoffActive = now - _lastEmptyLoadTime < EMPTY_BACKOFF;
+
+  if (!_cachedModels) {
     _cachedModels = loadModels();
     _lastLoadTime = now;
-    _loadReturnedEmpty = _cachedModels.length === 0;
+    if (_cachedModels.length === 0) {
+      _lastEmptyLoadTime = now;
+      return _cachedModels;
+    }
+  } else if (!emptyBackoffActive && now - _lastLoadTime > CACHE_TTL) {
+    // TTL 到期，尝试刷新（非空结果情况下）
+    const fresh = loadModels();
+    _lastLoadTime = now;
+    if (fresh.length > 0) {
+      _cachedModels = fresh;
+    } else {
+      _lastEmptyLoadTime = now;
+    }
   }
   return _cachedModels;
 }
