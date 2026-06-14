@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { fetchUpstream } from '../lib/upstream.js';
 import { logRequest } from '../lib/logger.js';
 import { replaceSystemPrompt, filterContentMessages } from '../lib/prompt.js';
+import { normalizeOpenAIMessages } from '../lib/normalize.js';
 import { readSSEStream, aggregateSSEChunks } from '../lib/sse.js';
 
 const LOG_DIR = path.resolve('logs');
@@ -22,8 +23,10 @@ export async function handleChatCompletions(req, res) {
     stream: true,
   };
 
-  // Replace system prompt & filter content
+  // Normalize format (fix non-standard array content in assistant messages)
+  // then replace system prompt & filter content
   if (upstreamBody.messages) {
+    normalizeOpenAIMessages(upstreamBody.messages);
     replaceSystemPrompt(upstreamBody.messages);
     upstreamBody.messages = filterContentMessages(upstreamBody.messages);
   }
@@ -69,17 +72,66 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
   let streamBuf = '';
+  let pipeBuf = '';       // buffer for SSE line-level piping with OpenAI normalization
+  let pipeLogLines = [];   // accumulate rewritten SSE for debug dump
   let streamUsage = null;
   let streamModel = upstreamBody.model;
   let sentDone = false;
   let lastDataTime = Date.now();
+
+  /**
+   * Keep the public OpenAI endpoint OpenAI-shaped.
+   *
+   * CodeBuddy upstream emits several empty vendor fields. ccswitch turns
+   * `reasoning_content: ""` into empty Anthropic thinking blocks, which can
+   * truncate Claude Code's visible response. Strip only empty/null extras and
+   * preserve real OpenAI fields and finish_reason values.
+   */
+  function normalizeSSEData(dataStr) {
+    try {
+      const obj = JSON.parse(dataStr);
+      const choice = obj.choices?.[0];
+      if (choice) {
+        const delta = choice.delta || {};
+
+        if (delta.reasoning_content === '') delete delta.reasoning_content;
+        if (delta.content === '') delete delta.content;
+        if (
+          delta.function_call == null ||
+          (delta.function_call.name === '' && delta.function_call.arguments === '')
+        ) {
+          delete delta.function_call;
+        }
+        if (delta.refusal === '') delete delta.refusal;
+        if (delta.extra_fields == null) delete delta.extra_fields;
+        if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) delete delta.tool_calls;
+
+        if (choice.finish_reason === '') choice.finish_reason = null;
+      }
+      return JSON.stringify(obj);
+    } catch { /* not JSON, pass through */ }
+    return dataStr;
+  }
+
+  function writeDataEvent(dataStr) {
+    const line = `data: ${dataStr}\n\n`;
+    pipeLogLines.push(line);
+    res.write(line);
+  }
+
+  // ── response aggregation for debug log ──
+  let _fullContent = '';
+  let _fullReasoning = '';
+  let _toolCalls = [];
+  let _finishReason = null;
+  let _responseId = null;
 
   const STREAM_TIMEOUT = 120_000;
   const watchdog = setInterval(() => {
     if (Date.now() - lastDataTime > STREAM_TIMEOUT) {
       console.error(`[stream timeout] no data for ${STREAM_TIMEOUT}ms`);
       try { reader.cancel(); } catch {}
-      if (!sentDone) { res.write('data: [DONE]\n\n'); sentDone = true; }
+      if (!sentDone) { writeDataEvent('[DONE]'); sentDone = true; }
       res.end();
       clearInterval(watchdog);
     }
@@ -92,9 +144,36 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
       lastDataTime = Date.now();
       const chunk = decoder.decode(value, { stream: true });
 
-      if (chunk.includes('data: [DONE]')) sentDone = true;
-      res.write(chunk);
+      // ── line-level SSE piping with OpenAI response normalization ──
+      pipeBuf += chunk;
+      const pipeLines = pipeBuf.split('\n');
+      pipeBuf = pipeLines.pop() || '';  // keep incomplete last line
 
+      for (const line of pipeLines) {
+        const trimmed = line.trim();
+
+        // OpenAI streams are data-only. Ignore blank separators from upstream;
+        // writeDataEvent emits normalized SSE separators.
+        if (!trimmed) {
+          continue;
+        }
+        if (!trimmed.startsWith('data: ')) {
+          res.write(`${line}\n`);
+          continue;
+        }
+
+        const dataStr = line.slice(6);  // strip "data: "
+
+        if (dataStr === '[DONE]') {
+          sentDone = true;
+          writeDataEvent('[DONE]');
+          continue;
+        }
+
+        writeDataEvent(normalizeSSEData(dataStr));
+      }
+
+      // ── aggregate for debug log (reuse parsed data) ──
       streamBuf += chunk;
       const sseLines = streamBuf.split('\n');
       streamBuf = sseLines.pop() || '';
@@ -107,7 +186,38 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
           const p = JSON.parse(d);
           if (p.model) streamModel = p.model;
           if (p.usage) streamUsage = p.usage;
+
+          if (p.id && !_responseId) _responseId = p.id;
+          const choice = p.choices?.[0];
+          if (choice) {
+            const delta = choice.delta || {};
+            if (choice.finish_reason) _finishReason = choice.finish_reason;
+            if (delta.content) _fullContent += delta.content;
+            if (delta.reasoning_content) _fullReasoning += delta.reasoning_content;
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index ?? _toolCalls.length;
+                if (!_toolCalls[idx]) _toolCalls[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
+                if (tc.id) _toolCalls[idx].id = tc.id;
+                if (tc.function?.name && !_toolCalls[idx].function.name) _toolCalls[idx].function.name = tc.function.name;
+                if (tc.function?.arguments) _toolCalls[idx].function.arguments += tc.function.arguments;
+              }
+            }
+          }
         } catch { /* skip */ }
+      }
+    }
+
+    // flush remaining pipeBuf
+    if (pipeBuf.trim()) {
+      const trimmed = pipeBuf.trim();
+      if (trimmed.startsWith('data: ') && trimmed.slice(6) !== '[DONE]') {
+        writeDataEvent(normalizeSSEData(trimmed.slice(6)));
+      } else if (trimmed === 'data: [DONE]') {
+        sentDone = true;
+        writeDataEvent('[DONE]');
+      } else {
+        res.write(pipeBuf);
       }
     }
   } catch (e) {
@@ -120,8 +230,40 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime }) {
     clearInterval(watchdog);
   }
 
-  if (!sentDone) { res.write('data: [DONE]\n\n'); }
+  if (!sentDone) { writeDataEvent('[DONE]'); }
   res.end();
+
+  // ── save aggregated response for debugging ──
+  try {
+    const debugResp = {
+      id: _responseId,
+      model: streamModel,
+      finish_reason: _finishReason,
+      message: {
+        role: 'assistant',
+        content: _fullContent || null,
+      },
+      tool_calls_count: _toolCalls.length,
+      usage: streamUsage,
+      sse_sent_to_client: pipeLogLines.join(''),
+    };
+    if (_fullReasoning) debugResp.message.reasoning_content = _fullReasoning;
+    if (_toolCalls.length > 0) {
+      debugResp.message.tool_calls = _toolCalls.map((tc) => {
+        let args = tc.function.arguments;
+        try { args = JSON.parse(args); } catch {}
+        return { id: tc.id, function: { name: tc.function.name, arguments: args } };
+      });
+    }
+    fs.writeFileSync(path.join(LOG_DIR, 'last-response.json'), JSON.stringify(debugResp, null, 2));
+
+    // console summary
+    const tcSummary = _toolCalls.length > 0
+      ? _toolCalls.map((tc) => tc.function.name).join(', ')
+      : '(none)';
+    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${_finishReason} content=${_fullContent.length}chars tool_calls=[${tcSummary}] → saved to logs/last-response.json`);
+  } catch { /* ignore */ }
+
   logRequest({ model: streamModel, startTime, usage: streamUsage });
 }
 
@@ -151,6 +293,32 @@ async function aggregateNonStreamResponse({ res, upstream, upstreamBody, startTi
     choices: [{ index: 0, message, finish_reason: finishReason }],
     usage,
   });
+
+  // ── save response for debugging ──
+  try {
+    const debugResp = {
+      id,
+      model,
+      finish_reason: finishReason,
+      message: { role: 'assistant', content: fullContent || null },
+      tool_calls_count: toolCalls.length,
+      usage,
+    };
+    if (fullReasoning) debugResp.message.reasoning_content = fullReasoning;
+    if (toolCalls.length > 0) {
+      debugResp.message.tool_calls = toolCalls.map((tc) => {
+        let args = tc.function.arguments;
+        try { args = JSON.parse(args); } catch {}
+        return { id: tc.id, function: { name: tc.function.name, arguments: args } };
+      });
+    }
+    fs.writeFileSync(path.join(LOG_DIR, 'last-response.json'), JSON.stringify(debugResp, null, 2));
+
+    const tcSummary = toolCalls.length > 0
+      ? toolCalls.map((tc) => tc.function.name).join(', ')
+      : '(none)';
+    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${finishReason} content=${(fullContent||'').length}chars tool_calls=[${tcSummary}] → saved to logs/last-response.json`);
+  } catch { /* ignore */ }
 
   logRequest({ model, startTime, usage });
 }

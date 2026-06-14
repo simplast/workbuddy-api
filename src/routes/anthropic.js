@@ -5,9 +5,30 @@ import { config } from '../config.js';
 import { fetchUpstream } from '../lib/upstream.js';
 import { logRequest } from '../lib/logger.js';
 import { replaceSystemPrompt, filterContentMessages } from '../lib/prompt.js';
-import { anthropicToOpenAIMessages, anthropicToOpenAITools, mapToolChoice } from '../convert/anthropic.js';
+import { anthropicToOpenAIMessages, anthropicToOpenAITools, prepareUpstreamBody } from '../convert/anthropic.js';
 
 const LOG_DIR = path.resolve('logs');
+
+/**
+ * OpenAI finish_reason → Anthropic stop_reason mapping.
+ * Handles both standard OpenAI values and non-standard upstream values.
+ */
+const STOP_REASON_MAP = {
+  // OpenAI standard → Anthropic
+  'stop': 'end_turn',
+  'tool_calls': 'tool_use',
+  'length': 'max_tokens',
+  'content_filter': 'end_turn',
+  // Already Anthropic-compatible values — pass through
+  'end_turn': 'end_turn',
+  'tool_use': 'tool_use',
+  'max_tokens': 'max_tokens',
+};
+
+function mapStopReason(reason) {
+  if (!reason) return 'end_turn';
+  return STOP_REASON_MAP[reason] ?? 'end_turn';
+}
 
 function msgId() {
   return 'msg_' + crypto.randomBytes(20).toString('hex');
@@ -15,6 +36,74 @@ function msgId() {
 
 function sseEvent(event, obj) {
   return `event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`;
+}
+
+/**
+ * Detect pseudo-XML tool calls in text content and parse them into
+ * structured tool_use content blocks.
+ *
+ * Some models output tool calls as XML-like tags in text instead of
+ * using structured function calling:
+ *   <tool_calls>
+ *   <invoke name="Bash">
+ *   <parameter name="command">echo hello</parameter>
+ *   </invoke>
+ *   </tool_calls>
+ *
+ * This function extracts those and returns { cleanText, parsedToolCalls }.
+ */
+function extractPseudoXMLToolCalls(text) {
+  if (!text || !text.includes('<tool_calls>') && !text.includes('<invoke')) {
+    return { cleanText: text, parsedToolCalls: [] };
+  }
+
+  const toolCalls = [];
+  let cleanText = text;
+
+  // Pattern: <invoke name="..."><parameter name="...">value</parameter></invoke>
+  // Also handle: <tool_call name="..." arguments="..."> format
+  const invokePattern = /<invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/invoke>/g;
+  const toolCallPattern = /<tool_call\s+name="([^"]+)"\s+arguments="([^"]*)"\s*\/?>/g;
+
+  let match;
+  while ((match = invokePattern.exec(text)) !== null) {
+    const name = match[1];
+    const paramsRaw = match[2];
+    // Extract parameters: <parameter name="key">value</parameter>
+    const input = {};
+    const paramPattern = /<parameter\s+name="([^"]+)">([\s\S]*?)<\/parameter>/g;
+    let pm;
+    while ((pm = paramPattern.exec(paramsRaw)) !== null) {
+      input[pm[1]] = pm[2];
+    }
+    toolCalls.push({
+      id: `toolu_${crypto.randomBytes(12).toString('hex')}`,
+      name,
+      input,
+    });
+  }
+
+  while ((match = toolCallPattern.exec(text)) !== null) {
+    let input = {};
+    try { input = JSON.parse(match[2]); } catch {}
+    toolCalls.push({
+      id: `toolu_${crypto.randomBytes(12).toString('hex')}`,
+      name: match[1],
+      input,
+    });
+  }
+
+  if (toolCalls.length > 0) {
+    // Remove the pseudo-XML from text
+    cleanText = text
+      .replace(/<tool_calls>[\s\S]*?<\/tool_calls>/g, '')
+      .replace(/<invoke\s+name="[^"]+"\s*>[\s\S]*?<\/invoke>/g, '')
+      .replace(/<tool_call\s+name="[^"]+"\s+arguments="[^"]*"\s*\/?>/g, '')
+      .trim();
+    console.log(`\x1b[36m[pseudo-xml]\x1b[0m detected ${toolCalls.length} pseudo-XML tool call(s) in text: ${toolCalls.map(tc => tc.name).join(', ')}`);
+  }
+
+  return { cleanText, parsedToolCalls: toolCalls };
 }
 
 /**
@@ -28,21 +117,16 @@ export async function handleMessages(req, res) {
   const openaiMessages = anthropicToOpenAIMessages(body);
   const openaiTools = anthropicToOpenAITools(body.tools);
 
-  const upstreamBody = {
-    model,
-    messages: openaiMessages,
-    stream: true,
-    stream_options: { include_usage: true },
-  };
-  if (openaiTools && openaiTools.length > 0) upstreamBody.tools = openaiTools;
-  if (body.max_tokens) upstreamBody.max_tokens = body.max_tokens;
-  if (body.temperature != null) upstreamBody.temperature = body.temperature;
-  const tc = mapToolChoice(body.tool_choice);
-  if (tc) upstreamBody.tool_choice = tc;
+  const upstreamBody = prepareUpstreamBody(body, openaiMessages, openaiTools);
+
+  // Replace system prompt & filter BEFORE logging, so the log matches the actual upstream request
+  replaceSystemPrompt(upstreamBody.messages);
+  upstreamBody.messages = filterContentMessages(upstreamBody.messages);
 
   // Debug dump
   try {
     fs.writeFileSync(path.join(LOG_DIR, 'last-request-anthropic.json'), JSON.stringify(upstreamBody, null, 2));
+    console.log(`\x1b[33m[req dump]\x1b[0m ${upstreamBody.messages.length} messages, ${upstreamBody.tools?.length ?? 0} tools → saved to logs/last-request-anthropic.json`);
   } catch {}
 
   if (body.stream === true) {
@@ -54,9 +138,6 @@ export async function handleMessages(req, res) {
 
 // ─── 流式 Anthropic 响应 ───────────────────────────────────────────────
 async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) {
-  replaceSystemPrompt(upstreamBody.messages);
-  upstreamBody.messages = filterContentMessages(upstreamBody.messages);
-
   const id = msgId();
 
   const upstream = await fetchUpstream(upstreamBody);
@@ -84,14 +165,50 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
   const decoder = new TextDecoder();
   let buffer = '';
 
+  // Block state machine:
+  // Anthropic content blocks come in order: thinking → text → tool_use
+  // We track which block type is currently open
   let nextBlockIdx = 0;
-  let textBlockIdx = -1;
-  let textOpen = false;
-  const toolMap = new Map();
+  let currentBlockType = null;  // 'thinking' | 'text' | null
+  let currentBlockIdx = -1;
+  const toolMap = new Map();    // OpenAI tool_call index → Anthropic block index
   let lastOi = 0;
   let finishReason = null;
   let usage = { input_tokens: 0, output_tokens: 0 };
+  let _fullContent = '';
+  let _fullReasoning = '';
   let lastDataTime = Date.now();
+
+  // Buffer for pseudo-XML tool call detection at stream end
+  let _pseudoXMLBuffer = '';
+
+  function closeCurrentBlock() {
+    if (currentBlockType) {
+      res.write(sseEvent('content_block_stop', { type: 'content_block_stop', index: currentBlockIdx }));
+      currentBlockType = null;
+      currentBlockIdx = -1;
+    }
+  }
+
+  function openBlock(type) {
+    closeCurrentBlock();
+    currentBlockIdx = nextBlockIdx++;
+    currentBlockType = type;
+
+    if (type === 'thinking') {
+      res.write(sseEvent('content_block_start', {
+        type: 'content_block_start',
+        index: currentBlockIdx,
+        content_block: { type: 'thinking', thinking: '' },
+      }));
+    } else if (type === 'text') {
+      res.write(sseEvent('content_block_start', {
+        type: 'content_block_start',
+        index: currentBlockIdx,
+        content_block: { type: 'text', text: '' },
+      }));
+    }
+  }
 
   const TIMEOUT = 120_000;
   const watchdog = setInterval(() => {
@@ -132,30 +249,36 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
           const delta = choice.delta || {};
           finishReason = choice.finish_reason || finishReason;
 
-          // 文本内容
-          if (delta.content) {
-            if (!textOpen) {
-              textBlockIdx = nextBlockIdx++;
-              textOpen = true;
-              res.write(sseEvent('content_block_start', {
-                type: 'content_block_start',
-                index: textBlockIdx,
-                content_block: { type: 'text', text: '' },
-              }));
+          // ── reasoning_content → thinking block ──
+          if (delta.reasoning_content) {
+            _fullReasoning += delta.reasoning_content;
+            if (currentBlockType !== 'thinking') {
+              openBlock('thinking');
             }
             res.write(sseEvent('content_block_delta', {
               type: 'content_block_delta',
-              index: textBlockIdx,
+              index: currentBlockIdx,
+              delta: { type: 'thinking_delta', thinking: delta.reasoning_content },
+            }));
+          }
+
+          // ── text content → text block ──
+          if (delta.content) {
+            _fullContent += delta.content;
+            _pseudoXMLBuffer += delta.content;  // accumulate for pseudo-XML detection
+            if (currentBlockType !== 'text') {
+              openBlock('text');
+            }
+            res.write(sseEvent('content_block_delta', {
+              type: 'content_block_delta',
+              index: currentBlockIdx,
               delta: { type: 'text_delta', text: delta.content },
             }));
           }
 
-          // tool calls
+          // ── tool_calls → tool_use block ──
           if (delta.tool_calls && delta.tool_calls.length > 0) {
-            if (textOpen) {
-              res.write(sseEvent('content_block_stop', { type: 'content_block_stop', index: textBlockIdx }));
-              textOpen = false;
-            }
+            closeCurrentBlock();  // close any open text/thinking block
 
             for (const tc of delta.tool_calls) {
               const oi = tc.index ?? lastOi;
@@ -195,19 +318,40 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
     clearInterval(watchdog);
   }
 
-  // 关闭文本块
-  if (textOpen) {
-    res.write(sseEvent('content_block_stop', { type: 'content_block_stop', index: textBlockIdx }));
-  }
+  // Close any open text/thinking block
+  closeCurrentBlock();
 
-  // 关闭所有 tool 块
-  for (const [, ai] of toolMap) {
+  // ── Post-stream: detect pseudo-XML tool calls in accumulated text ──
+  const { cleanText, parsedToolCalls } = extractPseudoXMLToolCalls(_pseudoXMLBuffer);
+  for (const tc of parsedToolCalls) {
+    const ai = nextBlockIdx++;
+    res.write(sseEvent('content_block_start', {
+      type: 'content_block_start',
+      index: ai,
+      content_block: { type: 'tool_use', id: tc.id, name: tc.name, input: {} },
+    }));
+    res.write(sseEvent('content_block_delta', {
+      type: 'content_block_delta',
+      index: ai,
+      delta: { type: 'input_json_delta', partial_json: JSON.stringify(tc.input) },
+    }));
     res.write(sseEvent('content_block_stop', { type: 'content_block_stop', index: ai }));
   }
 
-  let stopReason = 'end_turn';
-  if (finishReason === 'tool_calls') stopReason = 'tool_use';
-  else if (finishReason === 'length') stopReason = 'max_tokens';
+  // If we parsed pseudo-XML tool calls, override the stop reason to tool_use
+  // (unless there were also structured tool_calls already)
+  let stopReason = mapStopReason(finishReason);
+  if (parsedToolCalls.length > 0 && toolMap.size === 0) {
+    // The model outputted tool calls as text instead of structured format
+    // Force stop_reason = tool_use so Claude Code knows there are tool calls
+    stopReason = 'tool_use';
+    console.log(`\x1b[36m[pseudo-xml]\x1b[0m overriding stop_reason to "tool_use" (detected pseudo-XML tool calls)`);
+  }
+
+  // Close all structured tool blocks
+  for (const [, ai] of toolMap) {
+    res.write(sseEvent('content_block_stop', { type: 'content_block_stop', index: ai }));
+  }
 
   res.write(sseEvent('message_delta', {
     type: 'message_delta',
@@ -218,14 +362,37 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model }) 
   res.write(sseEvent('message_stop', { type: 'message_stop' }));
   res.end();
 
+  // ── save debug response log ──
+  try {
+    const totalToolCalls = toolMap.size + parsedToolCalls.length;
+    const debugResp = {
+      id, model, stop_reason: stopReason,
+      raw_finish_reason: finishReason,
+      content_text: _fullContent.length > 0 ? _fullContent.length + ' chars' : '(empty)',
+      reasoning_text: _fullReasoning.length > 0 ? _fullReasoning.length + ' chars' : '(none)',
+      structured_tool_calls: toolMap.size,
+      pseudo_xml_tool_calls: parsedToolCalls.length,
+      total_tool_calls: totalToolCalls,
+      usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
+    };
+    if (toolMap.size > 0) {
+      debugResp.tool_calls = [];
+      for (const [oi, ai] of toolMap) {
+        debugResp.tool_calls.push({ openai_index: oi, anthropic_index: ai });
+      }
+    }
+    if (parsedToolCalls.length > 0) {
+      debugResp.pseudo_xml_tool_calls_detail = parsedToolCalls.map(tc => ({ name: tc.name }));
+    }
+    fs.writeFileSync(path.join(LOG_DIR, 'last-response-anthropic.json'), JSON.stringify(debugResp, null, 2));
+    console.log(`\x1b[33m[anthropic resp]\x1b[0m stop_reason=${stopReason} (raw=${finishReason}) content=${_fullContent.length}chars reasoning=${_fullReasoning.length}chars structured_tools=${toolMap.size} pseudo_xml_tools=${parsedToolCalls.length} → saved to logs/last-response-anthropic.json`);
+  } catch { /* ignore */ }
+
   logRequest({ model, startTime, usage: { prompt_tokens: usage.input_tokens, completion_tokens: usage.output_tokens, total_tokens: usage.input_tokens + usage.output_tokens } });
 }
 
 // ─── 非流式 Anthropic 响应 ─────────────────────────────────────────────
 async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model }) {
-  replaceSystemPrompt(upstreamBody.messages);
-  upstreamBody.messages = filterContentMessages(upstreamBody.messages);
-
   const id = msgId();
 
   const upstream = await fetchUpstream(upstreamBody);
@@ -238,6 +405,7 @@ async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model 
   const decoder = new TextDecoder();
   let buf = '';
   let fullContent = '';
+  let fullReasoning = '';
   let toolCalls = [];
   let lastChunk = null;
 
@@ -259,6 +427,7 @@ async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model 
         if (!choice) continue;
         const delta = choice.delta || {};
         if (delta.content) fullContent += delta.content;
+        if (delta.reasoning_content) fullReasoning += delta.reasoning_content;
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
             const idx = tc.index ?? toolCalls.length;
@@ -272,25 +441,56 @@ async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model 
     }
   }
 
-  const usage = lastChunk?.usage || { prompt_tokens: 0, completion_tokens: 0 };
+  // ── Detect pseudo-XML tool calls in text ──
+  const { cleanText, parsedToolCalls } = extractPseudoXMLToolCalls(fullContent);
+
+  // Build Anthropic content blocks in order: thinking → text → tool_use
   const content = [];
-  if (fullContent) content.push({ type: 'text', text: fullContent });
+  if (fullReasoning) content.push({ type: 'thinking', thinking: fullReasoning });
+  if (cleanText) content.push({ type: 'text', text: cleanText });
   for (const tc of toolCalls) {
     let input = {};
     try { input = JSON.parse(tc.function.arguments); } catch {}
     content.push({ type: 'tool_use', id: tc.id || `toolu_${crypto.randomBytes(12).toString('hex')}`, name: tc.function.name, input });
   }
+  for (const tc of parsedToolCalls) {
+    content.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+  }
 
-  let stopReason = 'end_turn';
   const fr = lastChunk?.choices?.[0]?.finish_reason;
-  if (fr === 'tool_calls') stopReason = 'tool_use';
-  else if (fr === 'length') stopReason = 'max_tokens';
+  let stopReason = mapStopReason(fr);
+  if (parsedToolCalls.length > 0 && toolCalls.length === 0) {
+    stopReason = 'tool_use';
+  }
 
   res.json({
     id, type: 'message', role: 'assistant', content, model,
     stop_reason: stopReason, stop_sequence: null,
-    usage: { input_tokens: usage.prompt_tokens || 0, output_tokens: usage.completion_tokens || 0 },
+    usage: { input_tokens: lastChunk?.usage?.prompt_tokens || 0, output_tokens: lastChunk?.usage?.completion_tokens || 0 },
   });
 
-  logRequest({ model, startTime, usage });
+  // ── save debug response log ──
+  try {
+    const totalToolCalls = toolCalls.length + parsedToolCalls.length;
+    const debugResp = {
+      id, model, stop_reason: stopReason,
+      raw_finish_reason: fr,
+      content_text: fullContent.length > 0 ? fullContent.length + ' chars' : '(empty)',
+      reasoning_text: fullReasoning.length > 0 ? fullReasoning.length + ' chars' : '(none)',
+      structured_tool_calls: toolCalls.length,
+      pseudo_xml_tool_calls: parsedToolCalls.length,
+      total_tool_calls: totalToolCalls,
+      usage: { input_tokens: lastChunk?.usage?.prompt_tokens || 0, output_tokens: lastChunk?.usage?.completion_tokens || 0 },
+    };
+    if (toolCalls.length > 0) {
+      debugResp.tool_calls = toolCalls.map(tc => ({ id: tc.id, name: tc.function.name }));
+    }
+    if (parsedToolCalls.length > 0) {
+      debugResp.pseudo_xml_tool_calls_detail = parsedToolCalls.map(tc => ({ name: tc.name }));
+    }
+    fs.writeFileSync(path.join(LOG_DIR, 'last-response-anthropic.json'), JSON.stringify(debugResp, null, 2));
+    console.log(`\x1b[33m[anthropic resp]\x1b[0m stop_reason=${stopReason} (raw=${fr}) content=${fullContent.length}chars reasoning=${fullReasoning.length}chars structured_tools=${toolCalls.length} pseudo_xml_tools=${parsedToolCalls.length} → saved to logs/last-response-anthropic.json`);
+  } catch { /* ignore */ }
+
+  logRequest({ model, startTime, usage: lastChunk?.usage });
 }
