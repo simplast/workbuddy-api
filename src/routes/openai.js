@@ -1,15 +1,12 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { config } from '../config.js';
 import { fetchUpstream } from '../lib/upstream.js';
 import { logRequest } from '../lib/logger.js';
 import { replaceSystemPrompt, filterContentMessages } from '../lib/prompt.js';
 import { normalizeOpenAIMessages } from '../lib/normalize.js';
-import { readSSEStream, aggregateSSEChunks } from '../lib/sse.js';
-import { cleanupDebugDir } from '../lib/debug-cleanup.js';
-
-const LOG_DIR = path.resolve('logs');
-const DEBUG_DIR = path.join(LOG_DIR, 'requests');
+import { readSSEStream, aggregateSSEChunks, normalizeSSEData } from '../lib/sse.js';
+import { makeRequestId, dumpRequest, dumpResponse, logResponseSummary, LOG_DIR, DEBUG_DIR } from '../lib/debug.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * POST /v1/chat/completions — OpenAI-compatible endpoint
@@ -34,30 +31,9 @@ export async function handleChatCompletions(req, res) {
     upstreamBody.messages = filterContentMessages(upstreamBody.messages);
   }
 
-  // Debug dump (per-request to avoid concurrent overwrite)
-  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  try {
-    if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
-    cleanupDebugDir(DEBUG_DIR);
-    fs.writeFileSync(path.join(DEBUG_DIR, `openai-${requestId}.json`), JSON.stringify({ id: requestId, request: upstreamBody }, null, 2));
-    fs.writeFileSync(path.join(LOG_DIR, 'last-request.json'), JSON.stringify({ id: requestId, request: upstreamBody }, null, 2));
-    const msgs = upstreamBody.messages || [];
-    const sys = msgs.find((m) => m.role === 'system');
-    if (sys) {
-      const preview = (typeof sys.content === 'string' ? sys.content : JSON.stringify(sys.content)).slice(0, 200);
-      console.log(`\x1b[33m[req dump]\x1b[0m system prompt ${typeof sys.content === 'string' ? sys.content.length : JSON.stringify(sys.content).length} chars: ${preview}...`);
-    }
-    // 记录 ccswitch 传来的顶层参数（排查 thinking/reasoning_effort 丢失问题）
-    const topKeys = {};
-    for (const k of Object.keys(upstreamBody)) {
-      if (k === 'messages' || k === 'tools') continue;
-      topKeys[k] = upstreamBody[k];
-    }
-    console.log(`\x1b[33m[req dump]\x1b[0m ${msgs.length} messages, ${upstreamBody.tools?.length ?? 0} tools, top-keys: ${JSON.stringify(topKeys)} → saved (id=${requestId})`);
-    if (upstreamBody.reasoning_effort) {
-      console.log(`\x1b[36m[openai]\x1b[0m reasoning_effort=${upstreamBody.reasoning_effort} → upstream`);
-    }
-  } catch { /* ignore */ }
+  // Debug dump
+  const requestId = makeRequestId();
+  dumpRequest('openai', requestId, upstreamBody);
 
   try {
     const upstream = await fetchUpstream(upstreamBody);
@@ -68,9 +44,9 @@ export async function handleChatCompletions(req, res) {
     }
 
     if (wantStream) {
-      return pipeStreamResponse({ res, upstream, upstreamBody, startTime, requestId, debugDir: DEBUG_DIR });
+      return pipeStreamResponse({ res, upstream, upstreamBody, startTime, requestId });
     } else {
-      return aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime, requestId, debugDir: DEBUG_DIR });
+      return aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime, requestId });
     }
   } catch (err) {
     console.error('[proxy error]', err?.message || err);
@@ -79,7 +55,7 @@ export async function handleChatCompletions(req, res) {
 }
 
 // ─── 流式：直接透传 SSE，同时采集 usage ─────────────────────────────────
-async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requestId, debugDir }) {
+async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requestId }) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -87,7 +63,6 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
 
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
-  let streamBuf = '';
   let pipeBuf = '';       // buffer for SSE line-level piping with OpenAI normalization
   let pipeLogLines = [];   // accumulate rewritten SSE for debug dump
   let streamUsage = null;
@@ -102,40 +77,6 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
     aborted = true;
     try { reader.cancel(); } catch {}
   });
-
-  /**
-   * Keep the public OpenAI endpoint OpenAI-shaped.
-   *
-   * CodeBuddy upstream emits several empty vendor fields. ccswitch turns
-   * `reasoning_content: ""` into empty Anthropic thinking blocks, which can
-   * truncate Claude Code's visible response. Strip only empty/null extras and
-   * preserve real OpenAI fields and finish_reason values.
-   */
-  function normalizeSSEData(dataStr) {
-    try {
-      const obj = JSON.parse(dataStr);
-      const choice = obj.choices?.[0];
-      if (choice) {
-        const delta = choice.delta || {};
-
-        if (delta.reasoning_content === '') delete delta.reasoning_content;
-        if (delta.content === '') delete delta.content;
-        if (
-          delta.function_call == null ||
-          (delta.function_call.name === '' && delta.function_call.arguments === '')
-        ) {
-          delete delta.function_call;
-        }
-        if (delta.refusal === '') delete delta.refusal;
-        if (delta.extra_fields == null) delete delta.extra_fields;
-        if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) delete delta.tool_calls;
-
-        if (choice.finish_reason === '') choice.finish_reason = null;
-      }
-      return JSON.stringify(obj);
-    } catch { /* not JSON, pass through */ }
-    return dataStr;
-  }
 
   function writeDataEvent(dataStr) {
     const line = `data: ${dataStr}\n\n`;
@@ -177,9 +118,8 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
 
         // OpenAI streams are data-only. Ignore blank separators from upstream;
         // writeDataEvent emits normalized SSE separators.
-        if (!trimmed) {
-          continue;
-        }
+        if (!trimmed) continue;
+
         const dataMatch = trimmed.match(/^data:\s?(.*)$/);
         if (!dataMatch) {
           res.write(`${line}\n`);
@@ -197,40 +137,8 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
         writeDataEvent(normalizeSSEData(dataStr));
       }
 
-      // ── aggregate for debug log (reuse parsed data) ──
-      streamBuf += chunk;
-      const sseLines = streamBuf.split('\n');
-      streamBuf = sseLines.pop() || '';
-      for (const sl of sseLines) {
-        const t = sl.trim();
-        const dataMatch = t.match(/^data:\s?(.*)$/);
-        if (!dataMatch) continue;
-        const d = dataMatch[1];
-        if (d === '[DONE]') continue;
-        try {
-          const p = JSON.parse(d);
-          if (p.model) streamModel = p.model;
-          if (p.usage) streamUsage = p.usage;
-
-          if (p.id && !_responseId) _responseId = p.id;
-          const choice = p.choices?.[0];
-          if (choice) {
-            const delta = choice.delta || {};
-            if (choice.finish_reason) _finishReason = choice.finish_reason;
-            if (delta.content) _fullContent += delta.content;
-            if (delta.reasoning_content) _fullReasoning += delta.reasoning_content;
-            if (delta.tool_calls) {
-              for (const tc of delta.tool_calls) {
-                const idx = tc.index ?? _toolCalls.length;
-                if (!_toolCalls[idx]) _toolCalls[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
-                if (tc.id) _toolCalls[idx].id = tc.id;
-                if (tc.function?.name && !_toolCalls[idx].function.name) _toolCalls[idx].function.name = tc.function.name;
-                if (tc.function?.arguments) _toolCalls[idx].function.arguments += tc.function.arguments;
-              }
-            }
-          }
-        } catch { /* skip */ }
-      }
+      // ── aggregate for debug log ──
+      aggregateChunkForDebug(chunk);
     }
 
     // flush remaining pipeBuf
@@ -263,43 +171,47 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
   res.end();
 
   // ── save aggregated response for debugging ──
-  try {
-    const debugResp = {
-      id: _responseId,
-      model: streamModel,
-      finish_reason: _finishReason,
-      message: {
-        role: 'assistant',
-        content: _fullContent || null,
-      },
-      tool_calls_count: _toolCalls.length,
-      usage: streamUsage,
-      sse_sent_to_client: pipeLogLines.join(''),
-    };
-    if (_fullReasoning) debugResp.message.reasoning_content = _fullReasoning;
-    if (_toolCalls.length > 0) {
-      debugResp.message.tool_calls = _toolCalls.map((tc) => {
-        let args = tc.function.arguments;
-        try { args = JSON.parse(args); } catch {}
-        return { id: tc.id, function: { name: tc.function.name, arguments: args } };
-      });
-    }
-    fs.writeFileSync(path.join(debugDir, `openai-${requestId}-resp.json`), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
-    fs.writeFileSync(path.join(LOG_DIR, 'last-response.json'), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
-
-    // console summary
-    const tcSummary = _toolCalls.length > 0
-      ? _toolCalls.map((tc) => tc.function.name).join(', ')
-      : '(none)';
-    const reasoningSummary = _fullReasoning.length > 0 ? ` reasoning=${_fullReasoning.length}chars` : '';
-    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${_finishReason} content=${_fullContent.length}chars${reasoningSummary} tool_calls=[${tcSummary}] → saved to logs/last-response.json (id=${requestId})`);
-  } catch { /* ignore */ }
-
+  saveStreamDebugLog(requestId, streamModel, _finishReason, _fullContent, _fullReasoning, _toolCalls, streamUsage, pipeLogLines);
   logRequest({ model: streamModel, startTime, usage: streamUsage });
+
+  // ── helper: aggregate a raw SSE chunk for debug logging ──
+  function aggregateChunkForDebug(chunk) {
+    // Parse the raw chunk (before normalization) to extract content/usage
+    const lines = chunk.split('\n');
+    for (const sl of lines) {
+      const t = sl.trim();
+      const dataMatch = t.match(/^data:\s?(.*)$/);
+      if (!dataMatch) continue;
+      const d = dataMatch[1];
+      if (d === '[DONE]') continue;
+      try {
+        const p = JSON.parse(d);
+        if (p.model) streamModel = p.model;
+        if (p.usage) streamUsage = p.usage;
+        if (p.id && !_responseId) _responseId = p.id;
+        const choice = p.choices?.[0];
+        if (choice) {
+          const delta = choice.delta || {};
+          if (choice.finish_reason) _finishReason = choice.finish_reason;
+          if (delta.content) _fullContent += delta.content;
+          if (delta.reasoning_content) _fullReasoning += delta.reasoning_content;
+          if (delta.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? _toolCalls.length;
+              if (!_toolCalls[idx]) _toolCalls[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
+              if (tc.id) _toolCalls[idx].id = tc.id;
+              if (tc.function?.name && !_toolCalls[idx].function.name) _toolCalls[idx].function.name = tc.function.name;
+              if (tc.function?.arguments) _toolCalls[idx].function.arguments += tc.function.arguments;
+            }
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
 }
 
 // ─── 非流式：聚合 SSE chunks → 单个 JSON 响应 ──────────────────────────
-async function aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime, requestId, debugDir }) {
+async function aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime, requestId }) {
   const reader = upstream.body.getReader();
   const agg = aggregateSSEChunks();
 
@@ -326,31 +238,62 @@ async function aggregateNonStreamResponse({ res, upstream, upstreamBody, startTi
   });
 
   // ── save response for debugging ──
+  saveNonStreamDebugLog(requestId, id, model, finishReason, fullContent, fullReasoning, toolCalls, usage);
+  logRequest({ model, startTime, usage });
+}
+
+// ─── Debug log helpers ────────────────────────────────────────────────────
+function formatToolCallsForDebug(toolCalls) {
+  return toolCalls.map((tc) => {
+    let args = tc.function.arguments;
+    try { args = JSON.parse(args); } catch {}
+    return { id: tc.id, function: { name: tc.function.name, arguments: args } };
+  });
+}
+
+function saveStreamDebugLog(requestId, model, finishReason, content, reasoning, toolCalls, usage, pipeLogLines) {
   try {
     const debugResp = {
-      id,
+      id: requestId,
       model,
       finish_reason: finishReason,
-      message: { role: 'assistant', content: fullContent || null },
+      message: { role: 'assistant', content: content || null },
       tool_calls_count: toolCalls.length,
       usage,
+      sse_sent_to_client: pipeLogLines.join(''),
     };
-    if (fullReasoning) debugResp.message.reasoning_content = fullReasoning;
-    if (toolCalls.length > 0) {
-      debugResp.message.tool_calls = toolCalls.map((tc) => {
-        let args = tc.function.arguments;
-        try { args = JSON.parse(args); } catch {}
-        return { id: tc.id, function: { name: tc.function.name, arguments: args } };
-      });
-    }
-    fs.writeFileSync(path.join(debugDir, `openai-${requestId}-resp.json`), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
-    fs.writeFileSync(path.join(LOG_DIR, 'last-response.json'), JSON.stringify({ id: requestId, response: debugResp }, null, 2));
+    if (reasoning) debugResp.message.reasoning_content = reasoning;
+    if (toolCalls.length > 0) debugResp.message.tool_calls = formatToolCallsForDebug(toolCalls);
+    dumpResponse('openai', requestId, debugResp);
 
     const tcSummary = toolCalls.length > 0
       ? toolCalls.map((tc) => tc.function.name).join(', ')
       : '(none)';
-    console.log(`\x1b[33m[resp dump]\x1b[0m finish=${finishReason} content=${(fullContent||'').length}chars tool_calls=[${tcSummary}] → saved to logs/last-response.json (id=${requestId})`);
+    const reasoningSummary = reasoning.length > 0 ? ` reasoning=${reasoning.length}chars` : '';
+    logResponseSummary('openai', {
+      finishReason, contentLen: content.length, reasoningLen: reasoning.length,
+      toolCallSummary: tcSummary, extraInfo: reasoningSummary, requestId,
+    });
   } catch { /* ignore */ }
+}
 
-  logRequest({ model, startTime, usage });
+function saveNonStreamDebugLog(requestId, id, model, finishReason, content, reasoning, toolCalls, usage) {
+  try {
+    const debugResp = {
+      id, model, finish_reason: finishReason,
+      message: { role: 'assistant', content: content || null },
+      tool_calls_count: toolCalls.length,
+      usage,
+    };
+    if (reasoning) debugResp.message.reasoning_content = reasoning;
+    if (toolCalls.length > 0) debugResp.message.tool_calls = formatToolCallsForDebug(toolCalls);
+    dumpResponse('openai', requestId, debugResp);
+
+    const tcSummary = toolCalls.length > 0
+      ? toolCalls.map((tc) => tc.function.name).join(', ')
+      : '(none)';
+    logResponseSummary('openai', {
+      finishReason, contentLen: (content || '').length, toolCallSummary: tcSummary, requestId,
+    });
+  } catch { /* ignore */ }
 }

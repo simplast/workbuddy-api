@@ -1,0 +1,93 @@
+/**
+ * Debug dump management for request/response logging.
+ * Centralizes per-request debug file writing, directory management,
+ * and console output that was previously duplicated across route handlers.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { cleanupDebugDir } from './debug-cleanup.js';
+
+const LOG_DIR = path.resolve('logs');
+const DEBUG_DIR = path.join(LOG_DIR, 'requests');
+
+function ensureDirs() {
+  if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
+}
+
+/**
+ * Generate a unique request ID.
+ */
+export function makeRequestId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Dump the upstream request body to debug files and console.
+ * @param {string} prefix - 'openai' or 'anthropic'
+ * @param {string} requestId
+ * @param {object} upstreamBody
+ */
+export function dumpRequest(prefix, requestId, upstreamBody) {
+  try {
+    ensureDirs();
+    cleanupDebugDir(DEBUG_DIR);
+    const filename = `${prefix}-${requestId}.json`;
+    const content = JSON.stringify({ id: requestId, request: upstreamBody }, null, 2);
+    fs.writeFileSync(path.join(DEBUG_DIR, filename), content);
+
+    // Write last-request file (separate for openai vs anthropic)
+    const lastFile = prefix === 'anthropic' ? 'last-request-anthropic.json' : 'last-request.json';
+    fs.writeFileSync(path.join(LOG_DIR, lastFile), content);
+
+    // Console summary
+    const msgs = upstreamBody.messages || [];
+    const sys = msgs.find((m) => m.role === 'system');
+    if (sys && prefix === 'openai') {
+      const preview = (typeof sys.content === 'string' ? sys.content : JSON.stringify(sys.content)).slice(0, 200);
+      console.log(`\x1b[33m[req dump]\x1b[0m system prompt ${typeof sys.content === 'string' ? sys.content.length : JSON.stringify(sys.content).length} chars: ${preview}...`);
+    }
+
+    const topKeys = {};
+    for (const k of Object.keys(upstreamBody)) {
+      if (k === 'messages' || k === 'tools') continue;
+      topKeys[k] = upstreamBody[k];
+    }
+    console.log(`\x1b[33m[req dump]\x1b[0m ${msgs.length} messages, ${upstreamBody.tools?.length ?? 0} tools, top-keys: ${JSON.stringify(topKeys)} → saved (id=${requestId})`);
+
+    if (upstreamBody.reasoning_effort) {
+      console.log(`\x1b[36m[${prefix}]\x1b[0m reasoning_effort=${upstreamBody.reasoning_effort} → upstream`);
+    }
+  } catch { /* ignore */ }
+}
+
+/**
+ * Dump the aggregated response to debug files and console.
+ * @param {string} prefix - 'openai' or 'anthropic'
+ * @param {string} requestId
+ * @param {object} debugResp - Aggregated response summary object
+ */
+export function dumpResponse(prefix, requestId, debugResp) {
+  try {
+    ensureDirs();
+    const filename = `${prefix}-${requestId}-resp.json`;
+    const content = JSON.stringify({ id: requestId, response: debugResp }, null, 2);
+    fs.writeFileSync(path.join(DEBUG_DIR, filename), content);
+
+    const lastFile = prefix === 'anthropic' ? 'last-response-anthropic.json' : 'last-response.json';
+    fs.writeFileSync(path.join(LOG_DIR, lastFile), content);
+  } catch { /* ignore */ }
+}
+
+/**
+ * Log a response summary to console.
+ * @param {string} prefix
+ * @param {object} opts - { finishReason, contentLen, reasoningLen, toolCallSummary, extraInfo }
+ */
+export function logResponseSummary(prefix, opts) {
+  const { finishReason, contentLen, reasoningLen = 0, toolCallSummary = '(none)', extraInfo = '' } = opts;
+  const reasoningPart = reasoningLen > 0 ? ` reasoning=${reasoningLen}chars` : '';
+  const extra = extraInfo ? ` ${extraInfo}` : '';
+  console.log(`\x1b[33m[${prefix} resp]\x1b[0m finish=${finishReason} content=${contentLen}chars${reasoningPart}${extra} → saved to logs/ (id=${opts.requestId || ''})`);
+}
+
+export { LOG_DIR, DEBUG_DIR };

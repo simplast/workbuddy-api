@@ -4,6 +4,40 @@
  */
 
 /**
+ * Normalize OpenAI SSE data by stripping empty vendor fields.
+ *
+ * CodeBuddy upstream emits several empty vendor fields. ccswitch turns
+ * `reasoning_content: ""` into empty Anthropic thinking blocks, which can
+ * truncate Claude Code's visible response. Strip only empty/null extras and
+ * preserve real OpenAI fields and finish_reason values.
+ */
+export function normalizeSSEData(dataStr) {
+  try {
+    const obj = JSON.parse(dataStr);
+    const choice = obj.choices?.[0];
+    if (choice) {
+      const delta = choice.delta || {};
+
+      if (delta.reasoning_content === '') delete delta.reasoning_content;
+      if (delta.content === '') delete delta.content;
+      if (
+        delta.function_call == null ||
+        (delta.function_call.name === '' && delta.function_call.arguments === '')
+      ) {
+        delete delta.function_call;
+      }
+      if (delta.refusal === '') delete delta.refusal;
+      if (delta.extra_fields == null) delete delta.extra_fields;
+      if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) delete delta.tool_calls;
+
+      if (choice.finish_reason === '') choice.finish_reason = null;
+    }
+    return JSON.stringify(obj);
+  } catch { /* not JSON, pass through */ }
+  return dataStr;
+}
+
+/**
  * Read SSE stream and parse chunks, calling callbacks for each event.
  * Handles watchdog timeout and cleanup.
  */
