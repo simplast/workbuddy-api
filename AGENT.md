@@ -52,26 +52,26 @@ npm start      # 生产
 | GET  | `/v1/models` | 模型列表 |
 | GET  | `/health` | 健康检查 |
 
-## 环境变量（必需）
+## 环境变量
+
+至少需要配置一个 provider 的 API Key（`CODEBUDDY_API_KEY` 或 `NVIDIA_API_KEY`），否则服务启动时会报错退出。
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `CODEBUDDY_API_KEY` | 是 | CodeBuddy API Key |
+| `CODEBUDDY_API_KEY` | 至少一个 | CodeBuddy API Key（启用 CodeBuddy provider） |
+| `NVIDIA_API_KEY` | 至少一个 | NVIDIA API Key（启用 NVIDIA provider） |
 | `CODEBUDDY_BASE_URL` | 否 | 默认 `https://www.codebuddy.ai` |
-| `PORT` | 否 | 默认 3456 |
+| `CODEBUDDY_MODELS` | 否 | 逗号分隔的模型别名，默认 `default-model` |
+| `CODEBUDDY_TARGET_MODEL` | 否 | 实际上游模型名（别名未设映射时默认原样传递） |
+| `NVIDIA_BASE_URL` | 否 | 默认 `https://integrate.api.nvidia.com/v1` |
+| `NVIDIA_MODELS` | 否 | 逗号分隔的模型别名 |
+| `NVIDIA_TARGET_MODEL` | 否 | 实际上游模型名，默认 `z-ai/glm-5.1` |
+| `NVIDIA_RPM` | 否 | 每分钟请求限制，默认 `40` |
+| `NVIDIA_BURST` | 否 | 令牌桶突发容量，默认 `5` |
+| `DEFAULT_PROVIDER` | 否 | 未命中模型时的回退 provider，默认优先 codebuddy |
 | `DEFAULT_MODEL` | 否 | 默认模型 |
-
-**可选 provider（私有上游）:**
-
-```bash
-# NVIDIA（OpenAI + 限流）
-NVIDIA_API_KEY=...
-NVIDIA_MODELS=glm-5.1
-NVIDIA_RPM=40
-
-# 路由
-DEFAULT_PROVIDER=codebuddy
-```
+| `PORT` | 否 | 默认 3456 |
+| `HOST` | 否 | 默认 127.0.0.1 |
 
 ## Provider 架构
 

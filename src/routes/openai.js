@@ -1,5 +1,5 @@
 import { config } from '../config.js';
-import { fetchUpstream } from '../lib/upstream.js';
+import { fetchUpstream, providerFor } from '../lib/upstream.js';
 import { logRequest } from '../lib/logger.js';
 import { replaceSystemPrompt, filterContentMessages } from '../lib/prompt.js';
 import { normalizeOpenAIMessages } from '../lib/normalize.js';
@@ -8,12 +8,102 @@ import { makeRequestId, dumpRequest, saveOpenAIStreamDebugLog, saveOpenAINonStre
 
 /**
  * POST /v1/chat/completions — OpenAI-compatible endpoint
+ *
+ * Two paths:
+ *   - CodeBuddy upstream: full adaptations (prompt replacement, CLI headers,
+ *     SSE field normalization, forced-stream aggregation for non-stream clients)
+ *   - Other providers: pure passthrough — request body and upstream bytes
+ *     are forwarded unchanged, except for model-name alias resolution.
  */
 export async function handleChatCompletions(req, res) {
   const startTime = Date.now();
+  const reqModel = req.body.model || config.defaultModel;
+  const provider = providerFor(reqModel);
+  const isCodeBuddy = provider.name === 'codebuddy';
   const wantStream = req.body.stream === true;
 
-  const reqModel = req.body.model || config.defaultModel;
+  const requestId = makeRequestId();
+
+  if (isCodeBuddy) {
+    return handleCodeBuddyRequest({ req, res, reqModel, wantStream, startTime, requestId });
+  } else {
+    return handlePassthroughRequest({ req, res, reqModel, wantStream, startTime, requestId });
+  }
+}
+
+// ─── Path A: non-CodeBuddy providers — pure passthrough ────────────────
+async function handlePassthroughRequest({ req, res, reqModel, wantStream, startTime, requestId }) {
+  // Forward the original body; model-name alias resolution is handled by
+  // fetchUpstream → provider.preRequest() which maps the model but preserves
+  // everything else (stream flag, messages, tools, temperature, etc.)
+  const body = { ...req.body };
+  if (!body.model) body.model = reqModel;
+
+  // Debug dump — log what is actually being sent upstream
+  dumpRequest('openai-passthrough', requestId, body);
+
+  let upstream;
+  try {
+    upstream = await fetchUpstream(body);
+  } catch (err) {
+    console.error('[proxy error]', err?.message || err);
+    return res.status(500).json({ error: { message: err?.message || 'Internal proxy error', type: 'proxy_error' } });
+  }
+
+  if (!upstream.ok) {
+    const errText = await upstream.text();
+    console.error(`[upstream ${upstream.status}]`, errText);
+    return res.status(upstream.status).setHeader('content-type', 'application/json').send(errText);
+  }
+
+  // Forward response headers for streaming vs non-streaming
+  if (wantStream) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+  } else {
+    res.setHeader('Content-Type', 'application/json');
+  }
+
+  // Propagate client disconnect upstream
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    try { upstream.body.cancel?.(); } catch {}
+  });
+
+  // Pipe raw bytes from upstream to client
+  try {
+    const reader = upstream.body.getReader();
+    const TIMEOUT = 120_000;
+    let lastDataTime = Date.now();
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastDataTime > TIMEOUT) {
+        console.error('[stream timeout] passthrough no data');
+        try { reader.cancel(); } catch {}
+        clearInterval(watchdog);
+      }
+    }, 10_000);
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lastDataTime = Date.now();
+      res.write(value);
+    }
+    clearInterval(watchdog);
+  } catch (e) {
+    console.error('[passthrough pipe error]', e.message);
+  }
+
+  res.end();
+  logRequest({ model: reqModel, startTime });
+}
+
+// ─── Path B: CodeBuddy upstream — full adaptation stack ────────────────
+async function handleCodeBuddyRequest({ req, res, reqModel, wantStream, startTime, requestId }) {
+  // CodeBuddy backend is streaming-only; force stream + usage reporting
+  // on the upstream request regardless of what the client asked for.
   const upstreamBody = {
     ...req.body,
     model: reqModel,
@@ -21,17 +111,14 @@ export async function handleChatCompletions(req, res) {
     stream_options: { include_usage: true },
   };
 
-  // Normalize format (fix non-standard array content in assistant messages)
-  // then replace system prompt & filter content
+  // CodeBuddy-specific message pre-processing
   if (upstreamBody.messages) {
     normalizeOpenAIMessages(upstreamBody.messages);
     replaceSystemPrompt(upstreamBody.messages);
     upstreamBody.messages = filterContentMessages(upstreamBody.messages);
   }
 
-  // Debug dump
-  const requestId = makeRequestId();
-  dumpRequest('openai', requestId, upstreamBody);
+  dumpRequest('openai-codebuddy', requestId, upstreamBody);
 
   try {
     const upstream = await fetchUpstream(upstreamBody);
@@ -42,9 +129,9 @@ export async function handleChatCompletions(req, res) {
     }
 
     if (wantStream) {
-      return pipeStreamResponse({ res, upstream, upstreamBody, startTime, requestId });
+      return pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, requestId });
     } else {
-      return aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime, requestId });
+      return aggregateCodeBuddyNonStream({ res, upstream, upstreamBody, startTime, requestId });
     }
   } catch (err) {
     console.error('[proxy error]', err?.message || err);
@@ -52,8 +139,8 @@ export async function handleChatCompletions(req, res) {
   }
 }
 
-// ─── 流式：直接透传 SSE，同时采集 usage ─────────────────────────────────
-async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requestId }) {
+// ─── CodeBuddy streaming: SSE parsing + field normalization + passthrough
+async function pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, requestId }) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -75,7 +162,6 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
   let _toolCalls = [];
   let _finishReason = null;
 
-  // Propagate client disconnect upstream
   res.on('close', () => {
     if (res.writableEnded) return;
     aborted = true;
@@ -105,7 +191,6 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
       lastDataTime = Date.now();
       const chunk = decoder.decode(value, { stream: true });
 
-      // ── line-level SSE piping with OpenAI response normalization ──
       pipeBuf += chunk;
       const pipeLines = pipeBuf.split('\n');
       pipeBuf = pipeLines.pop() || '';
@@ -127,14 +212,14 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
           continue;
         }
 
+        // CodeBuddy-specific: strip empty vendor fields
         writeDataEvent(normalizeSSEData(dataStr));
       }
 
-      // ── aggregate for debug log ──
+      // Aggregate for debug log
       aggregateChunkForDebug(chunk);
     }
 
-    // flush remaining pipeBuf
     if (pipeBuf.trim()) {
       const trimmed = pipeBuf.trim();
       const dataMatch = trimmed.match(/^data:\s?(.*)$/);
@@ -199,8 +284,8 @@ async function pipeStreamResponse({ res, upstream, upstreamBody, startTime, requ
   }
 }
 
-// ─── 非流式：聚合 SSE chunks → 单个 JSON 响应 ──────────────────────────
-async function aggregateNonStreamResponse({ res, upstream, upstreamBody, startTime, requestId }) {
+// ─── CodeBuddy non-streaming: aggregate SSE → single JSON response ─────
+async function aggregateCodeBuddyNonStream({ res, upstream, upstreamBody, startTime, requestId }) {
   const reader = upstream.body.getReader();
   const agg = aggregateSSEChunks();
 
