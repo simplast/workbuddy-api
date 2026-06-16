@@ -91,3 +91,60 @@ export function logResponseSummary(prefix, opts) {
 }
 
 export { LOG_DIR, DEBUG_DIR };
+
+// ─── OpenAI debug response helpers ──────────────────────────────────────
+
+function formatToolCallsForDebug(toolCalls) {
+  return toolCalls.map((tc) => {
+    let args = tc.function.arguments;
+    try { args = JSON.parse(args); } catch {}
+    return { id: tc.id, function: { name: tc.function.name, arguments: args } };
+  });
+}
+
+export function saveOpenAIStreamDebugLog(requestId, model, finishReason, content, reasoning, toolCalls, usage, pipeLogLines) {
+  try {
+    const debugResp = {
+      id: requestId,
+      model,
+      finish_reason: finishReason,
+      message: { role: 'assistant', content: content || null },
+      tool_calls_count: toolCalls.length,
+      usage,
+      sse_sent_to_client: pipeLogLines.join(''),
+    };
+    if (reasoning) debugResp.message.reasoning_content = reasoning;
+    if (toolCalls.length > 0) debugResp.message.tool_calls = formatToolCallsForDebug(toolCalls);
+    dumpResponse('openai', requestId, debugResp);
+
+    const tcSummary = toolCalls.length > 0
+      ? toolCalls.map((tc) => tc.function.name).join(', ')
+      : '(none)';
+    const reasoningSummary = reasoning.length > 0 ? ` reasoning=${reasoning.length}chars` : '';
+    logResponseSummary('openai', {
+      finishReason, contentLen: content.length, reasoningLen: reasoning.length,
+      toolCallSummary: tcSummary, extraInfo: reasoningSummary, requestId,
+    });
+  } catch { /* ignore */ }
+}
+
+export function saveOpenAINonStreamDebugLog(requestId, id, model, finishReason, content, reasoning, toolCalls, usage) {
+  try {
+    const debugResp = {
+      id, model, finish_reason: finishReason,
+      message: { role: 'assistant', content: content || null },
+      tool_calls_count: toolCalls.length,
+      usage,
+    };
+    if (reasoning) debugResp.message.reasoning_content = reasoning;
+    if (toolCalls.length > 0) debugResp.message.tool_calls = formatToolCallsForDebug(toolCalls);
+    dumpResponse('openai', requestId, debugResp);
+
+    const tcSummary = toolCalls.length > 0
+      ? toolCalls.map((tc) => tc.function.name).join(', ')
+      : '(none)';
+    logResponseSummary('openai', {
+      finishReason, contentLen: (content || '').length, toolCallSummary: tcSummary, requestId,
+    });
+  } catch { /* ignore */ }
+}

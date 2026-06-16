@@ -93,6 +93,14 @@ export async function readSSEStream(reader, { onChunk, onDone, onError, timeoutM
 }
 
 /**
+ * Format an Anthropic SSE event string.
+ * Used by the Anthropic streaming response handler.
+ */
+export function sseEvent(event, obj) {
+  return `event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`;
+}
+
+/**
  * Aggregate SSE chunks into a complete response object.
  * Returns { fullContent, fullReasoning, toolCalls, lastChunk, id, model, created, usage }.
  */

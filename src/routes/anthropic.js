@@ -4,8 +4,9 @@ import { fetchUpstream } from '../lib/upstream.js';
 import { logRequest } from '../lib/logger.js';
 import { replaceSystemPrompt, filterContentMessages } from '../lib/prompt.js';
 import { anthropicToOpenAIMessages, anthropicToOpenAITools, prepareUpstreamBody } from '../convert/anthropic.js';
+import { makeMsgId, mapStopReason, extractPseudoXMLToolCalls, formatAnthropicContent, buildAnthropicDebugResp } from '../convert/anthropic-response.js';
+import { readSSEStream, aggregateSSEChunks, sseEvent } from '../lib/sse.js';
 import { makeRequestId, dumpRequest, dumpResponse, logResponseSummary } from '../lib/debug.js';
-import { mapStopReason, extractPseudoXMLToolCalls, formatAnthropicContent, buildAnthropicDebugResp } from '../convert/anthropic-response.js';
 
 /**
  * POST /v1/messages — Anthropic Messages API endpoint
@@ -37,7 +38,7 @@ export async function handleMessages(req, res) {
 
 // ─── 流式 Anthropic 响应 ───────────────────────────────────────────────
 async function streamAnthropicResponse({ upstreamBody, res, startTime, model, requestId }) {
-  const id = 'msg_' + crypto.randomBytes(20).toString('hex');
+  const id = makeMsgId();
 
   let upstream;
   try {
@@ -80,7 +81,6 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model, re
 
   // Block state machine:
   // Anthropic content blocks come in order: thinking → text → tool_use
-  // We track which block type is currently open
   let nextBlockIdx = 0;
   let currentBlockType = null;  // 'thinking' | 'text' | null
   let currentBlockIdx = -1;
@@ -162,9 +162,7 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model, re
           // ── reasoning_content → thinking block ──
           if (delta.reasoning_content) {
             _fullReasoning += delta.reasoning_content;
-            if (currentBlockType !== 'thinking') {
-              openBlock('thinking');
-            }
+            if (currentBlockType !== 'thinking') openBlock('thinking');
             res.write(sseEvent('content_block_delta', {
               type: 'content_block_delta',
               index: currentBlockIdx,
@@ -175,9 +173,7 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model, re
           // ── text content → text block ──
           if (delta.content) {
             _fullContent += delta.content;
-            if (currentBlockType !== 'text') {
-              openBlock('text');
-            }
+            if (currentBlockType !== 'text') openBlock('text');
             res.write(sseEvent('content_block_delta', {
               type: 'content_block_delta',
               index: currentBlockIdx,
@@ -187,7 +183,7 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model, re
 
           // ── tool_calls → tool_use block ──
           if (delta.tool_calls && delta.tool_calls.length > 0) {
-            closeCurrentBlock();  // close any open text/thinking block
+            closeCurrentBlock();
 
             for (const tc of delta.tool_calls) {
               const oi = tc.index ?? lastOi;
@@ -196,7 +192,6 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model, re
               if (!toolMap.has(oi)) {
                 const ai = nextBlockIdx++;
                 toolMap.set(oi, ai);
-
                 res.write(sseEvent('content_block_start', {
                   type: 'content_block_start',
                   index: ai,
@@ -231,7 +226,6 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model, re
   closeCurrentBlock();
 
   // Pseudo-XML tool call detection is disabled in streaming mode.
-  // The raw text_delta has already been emitted to the client.
   const stopReason = mapStopReason(finishReason);
 
   // Close all structured tool blocks
@@ -245,7 +239,6 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model, re
       delta: { stop_reason: stopReason, stop_sequence: null },
       usage: { output_tokens: usage.output_tokens },
     }));
-
     res.write(sseEvent('message_stop', { type: 'message_stop' }));
   }
   res.end();
@@ -276,7 +269,7 @@ async function streamAnthropicResponse({ upstreamBody, res, startTime, model, re
 
 // ─── 非流式 Anthropic 响应 ─────────────────────────────────────────────
 async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model, requestId }) {
-  const id = 'msg_' + crypto.randomBytes(20).toString('hex');
+  const id = makeMsgId();
 
   let upstream;
   try {
@@ -290,48 +283,16 @@ async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model,
     return res.status(upstream.status).json({ type: 'error', error: { type: 'api_error', message: errText } });
   }
 
+  // Reuse SSE aggregation utilities
   const reader = upstream.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  let fullContent = '';
-  let fullReasoning = '';
-  let toolCalls = [];
-  let lastChunk = null;
+  const agg = aggregateSSEChunks();
+  await readSSEStream(reader, {
+    onChunk: (parsed) => agg.handleChunk(parsed),
+  });
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const lines = buf.split('\n');
-    buf = lines.pop() || '';
-    for (const line of lines) {
-      const t = line.trim();
-      const dataMatch = t.match(/^data:\s?(.*)$/);
-      if (!dataMatch) continue;
-      const d = dataMatch[1];
-      if (d === '[DONE]') continue;
-      try {
-        const parsed = JSON.parse(d);
-        lastChunk = parsed;
-        const choice = parsed.choices?.[0];
-        if (!choice) continue;
-        const delta = choice.delta || {};
-        if (delta.content) fullContent += delta.content;
-        if (delta.reasoning_content) fullReasoning += delta.reasoning_content;
-        if (delta.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            const idx = tc.index ?? toolCalls.length;
-            if (!toolCalls[idx]) toolCalls[idx] = { id: tc.id || '', type: 'function', function: { name: '', arguments: '' } };
-            if (tc.id) toolCalls[idx].id = tc.id;
-            if (tc.function?.name && !toolCalls[idx].function.name) toolCalls[idx].function.name = tc.function.name;
-            if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
-          }
-        }
-      } catch { /* skip */ }
-    }
-  }
+  const { fullContent, fullReasoning, toolCalls, lastChunk } = agg.getResult();
 
-  // ── Detect pseudo-XML tool calls in text ──
+  // Detect pseudo-XML tool calls in text
   const { cleanText, parsedToolCalls } = extractPseudoXMLToolCalls(fullContent);
 
   // Build Anthropic content blocks
@@ -351,7 +312,6 @@ async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model,
 
   // ── save debug response log ──
   try {
-    const totalToolCalls = toolCalls.length + parsedToolCalls.length;
     const debugResp = buildAnthropicDebugResp({
       id, model, stopReason, rawFinishReason: fr,
       contentLen: fullContent.length, reasoningLen: fullReasoning.length,
@@ -372,9 +332,4 @@ async function nonStreamAnthropicResponse({ upstreamBody, res, startTime, model,
   } catch { /* ignore */ }
 
   logRequest({ model, startTime, usage: lastChunk?.usage });
-}
-
-// ─── SSE event helper ──────────────────────────────────────────────────
-function sseEvent(event, obj) {
-  return `event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`;
 }

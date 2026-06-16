@@ -5,6 +5,13 @@
 import crypto from 'node:crypto';
 
 /**
+ * Generate an Anthropic message ID (msg_ prefix).
+ */
+export function makeMsgId() {
+  return 'msg_' + crypto.randomBytes(20).toString('hex');
+}
+
+/**
  * OpenAI finish_reason → Anthropic stop_reason mapping.
  * Handles both standard OpenAI values and non-standard upstream values.
  */
