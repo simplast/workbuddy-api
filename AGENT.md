@@ -97,7 +97,6 @@ const result = await local.chat('default-model-lite').generate('Hello');
 
 ## 更多文档
 
-- [docs/refactor-workbuddy-api.md](docs/refactor-workbuddy-api.md) — 重构进度与架构设计
 - [docs/provider-guide.md](docs/provider-guide.md) — Provider 架构详解与新增指南
 - [docs/design-decisions.md](docs/design-decisions.md) — 关键设计决策（SSE 清洗、Anthropic 转换等）
 

@@ -73,7 +73,3 @@ CLI 版本探测为懒加载（首次请求时执行，不阻塞启动）。
 
 - 流式请求有 120 秒超时看门狗，超时会主动断开连接
 - 客户端中途断开也会取消 upstream 读取
-
-## 踩坑记录
-
-详见 [docs/lessons-001-sse-empty-fields.md](docs/lessons-001-sse-empty-fields.md) — SSE 流空字段导致下游解析器崩溃
