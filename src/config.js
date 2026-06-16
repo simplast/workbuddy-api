@@ -1,46 +1,76 @@
 import 'dotenv/config';
+import { CodeBuddyProvider } from './providers/codebuddy.js';
+import { NvidiaProvider } from './providers/nvidia.js';
+import { ProviderRegistry } from './providers/registry.js';
 
-const nvidiaModels = (process.env.NVIDIA_MODELS || 'z-ai/glm-5.1').split(',').map(s => s.trim());
+/**
+ * Multi-provider configuration.
+ *
+ * The two base protocols are 'openai' and 'anthropic'. CodeBuddy and NVIDIA
+ * are private providers that sit on top of one of these protocols — they
+ * only add custom headers, model name aliases, and rate limiting. New
+ * private providers should be added as subclasses of OpenAIProvider or
+ * AnthropicProvider in src/providers/.
+ */
+const providers = [];
 
-// If the alias is already a fully-qualified name (contains '/'), use it as-is.
-// Otherwise resolve via NVIDIA_TARGET_MODEL (default: 'z-ai/glm-5.1').
-function resolveNvidiaTarget(alias) {
-  if (alias.includes('/')) return alias;
-  return process.env.NVIDIA_TARGET_MODEL || 'z-ai/glm-5.1';
+// ─── codebuddy (default OpenAI protocol provider) ─────────────────────
+if (process.env.CODEBUDDY_API_KEY) {
+  const aliases = (process.env.CODEBUDDY_MODELS || process.env.DEFAULT_MODEL || 'default-model')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const modelMap = Object.fromEntries(aliases.map((a) => [a, process.env.CODEBUDDY_TARGET_MODEL || a]));
+  providers.push(new CodeBuddyProvider({
+    name: 'codebuddy',
+    baseURL: process.env.CODEBUDDY_BASE_URL || 'https://www.codebuddy.ai',
+    apiKey: process.env.CODEBUDDY_API_KEY,
+    models: aliases,
+    modelMap,
+  }));
 }
 
-export const config = {
-  // CodeBuddy API Key (Bearer token)
-  apiKey: process.env.CODEBUDDY_API_KEY || '',
-  // CodeBuddy 后端地址
-  baseURL: process.env.CODEBUDDY_BASE_URL || 'https://www.codebuddy.ai',
-  // 本地 proxy 端口
-  port: parseInt(process.env.PORT || '3456', 10),
-  host: process.env.HOST || '127.0.0.1',
-  // 默认模型
-  defaultModel: process.env.DEFAULT_MODEL || 'default-model',
-
-  // ── NVIDIA API (compact 模型代理) ──
-  nvidia: {
+// ─── nvidia (OpenAI protocol, with rate limiting) ─────────────────────
+if (process.env.NVIDIA_API_KEY) {
+  const aliases = (process.env.NVIDIA_MODELS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const modelMap = Object.fromEntries(
+    aliases.map((a) => [a, a.includes('/') ? a : (process.env.NVIDIA_TARGET_MODEL || 'z-ai/glm-5.1')]),
+  );
+  providers.push(new NvidiaProvider({
+    name: 'nvidia',
     baseURL: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
-    apiKey: process.env.NVIDIA_API_KEY || '',
-    models: nvidiaModels,
-    // 模型名映射：请求中的别名 → NVIDIA 真实模型名
-    modelMap: Object.fromEntries(nvidiaModels.map(m => [m, resolveNvidiaTarget(m)])),
-    // 速率限制（NVIDIA free tier 通常是 40 rpm）
-    rateLimit: {
-      rpm: parseInt(process.env.NVIDIA_RPM || '40', 10),
-      burst: parseInt(process.env.NVIDIA_BURST || '5', 10),
-    },
-  },
-};
+    apiKey: process.env.NVIDIA_API_KEY,
+    models: aliases,
+    modelMap,
+    rpm: parseInt(process.env.NVIDIA_RPM || '40', 10),
+    burst: parseInt(process.env.NVIDIA_BURST || '5', 10),
+  }));
+}
 
-if (!config.apiKey) {
+if (providers.length === 0) {
   console.error(
-    '\n  ⚠  CODEBUDDY_API_KEY 未设置！\n' +
-    '  请在 .env 文件中配置，或通过环境变量传入。\n' +
-    '  获取方式：访问 https://www.codebuddy.ai/profile 创建 API Key，\n' +
-    '  或在 CLI 登录后从浏览器 DevTools 提取 accessToken。\n'
+    '\n  ⚠  No provider configured!\n' +
+    '  Please set CODEBUDDY_API_KEY or NVIDIA_API_KEY in .env, or pass via environment.\n' +
+    '  See .env.example for the full list of supported providers.\n',
   );
   process.exit(1);
 }
+
+const defaultProviderName = process.env.DEFAULT_PROVIDER
+  || (process.env.CODEBUDDY_API_KEY ? 'codebuddy' : providers[0].name);
+
+export const providerRegistry = new ProviderRegistry(providers, defaultProviderName);
+
+export const config = {
+  // Local proxy server
+  port: parseInt(process.env.PORT || '3456', 10),
+  host: process.env.HOST || '127.0.0.1',
+
+  // Backward-compatible fields (used by routes/index before the registry is consulted)
+  defaultModel: process.env.DEFAULT_MODEL || 'default-model',
+  apiKey: process.env.CODEBUDDY_API_KEY || process.env.NVIDIA_API_KEY || '',
+  baseURL: providers[0]?.baseURL || 'https://www.codebuddy.ai',
+
+  // Provider registry — the source of truth for upstream routing
+  providers: providerRegistry,
+};

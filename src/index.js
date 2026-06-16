@@ -1,7 +1,7 @@
 import express from 'express';
 import { config } from './config.js';
 import { getModels } from './models.js';
-import { UPSTREAM } from './lib/upstream.js';
+import { upstreamURLFor } from './lib/upstream.js';
 import { handleChatCompletions } from './routes/openai.js';
 import { handleMessages } from './routes/anthropic.js';
 
@@ -10,7 +10,12 @@ app.use(express.json({ limit: '50mb' }));
 
 // 健康检查
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', upstream: UPSTREAM, defaultModel: config.defaultModel });
+  res.json({
+    status: 'ok',
+    defaultProvider: config.providers.defaultProviderName,
+    upstream: upstreamURLFor(config.defaultModel),
+    defaultModel: config.defaultModel,
+  });
 });
 
 // 列出可用模型
@@ -49,12 +54,13 @@ app.use((req, res) => {
 
 // ─── Start ──────────────────────────────────────────────────────────────────
 app.listen(config.port, config.host, () => {
+  const providers = config.providers.list().map((p) => p.name).join(', ');
   console.log(`
   ✦ workbuddy-api proxy running
 
   OpenAI:    http://${config.host}:${config.port}/v1/chat/completions
   Anthropic: http://${config.host}:${config.port}/v1/messages
-  Upstream:  ${UPSTREAM}
+  Providers: ${providers} (default: ${config.providers.defaultProviderName})
   Default:   ${config.defaultModel}
   `);
 });

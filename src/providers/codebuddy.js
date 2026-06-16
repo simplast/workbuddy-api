@@ -1,11 +1,19 @@
+/**
+ * CodeBuddy provider — OpenAI protocol + CLI request-header fingerprinting.
+ *
+ * CodeBuddy's upstream is a Chat Completions-compatible endpoint, but it
+ * rejects requests that don't look like the official CLI client. We layer
+ * the CLI fingerprint (Stainless SDK headers, B3 trace headers, conversation
+ * IDs, etc.) on top of a standard OpenAI request.
+ */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { config } from '../config.js';
+import { OpenAIProvider } from './base.js';
 
-// ─── CLI 版本 & SDK 信息 (懒加载：首次调用时探测) ─────────────────────
+// ─── CLI version & SDK info (lazy: detected on first request) ───────────
 const FALLBACK_CLI_VERSION = '2.106.1';
 let CLI_VERSION = FALLBACK_CLI_VERSION;
 let _cliVersionDetected = false;
@@ -22,15 +30,19 @@ function detectCliVersion() {
       if (ver) CLI_VERSION = ver;
     }
   } catch (e) {
-    console.warn(`  [headers] Failed to detect CLI version, using fallback ${CLI_VERSION}: ${e.message}`);
+    console.warn(`  [codebuddy] Failed to detect CLI version, using fallback ${CLI_VERSION}: ${e.message}`);
   }
 }
 
-export function hexId(len = 32) {
+function hexId(len = 32) {
   return crypto.randomBytes(len / 2).toString('hex');
 }
 
-export function buildCliHeaders(model) {
+/**
+ * Build the CLI fingerprint headers.
+ * @param {string} apiKey - for the X-User-Id suffix
+ */
+function buildCliHeaders(apiKey) {
   detectCliVersion();
   const conversationId = crypto.randomUUID();
   const requestId = hexId(32);
@@ -39,7 +51,7 @@ export function buildCliHeaders(model) {
   const spanId = hexId(16);
   const parentSpanId = hexId(16);
 
-  const userIdSuffix = config.apiKey.length >= 8 ? config.apiKey.slice(-8) : '00000000';
+  const userIdSuffix = apiKey.length >= 8 ? apiKey.slice(-8) : '00000000';
   const userId = `anonymous_${userIdSuffix}`;
 
   const platform = os.platform();
@@ -80,10 +92,31 @@ export function buildCliHeaders(model) {
 
     'x-codebuddy-request': '1',
 
-    'X-API-Key': config.apiKey,
+    'X-API-Key': apiKey,
     'X-User-Id': userId,
     'X-Product': 'SaaS',
 
     'User-Agent': `CLI/${CLI_VERSION} CodeBuddy/${CLI_VERSION}`,
   };
+}
+
+/**
+ * CodeBuddy OpenAI provider. Default baseURL is https://www.codebuddy.ai,
+ * and the actual endpoint path is /v2/chat/completions (not /v1).
+ */
+export class CodeBuddyProvider extends OpenAIProvider {
+  constructor(opts) {
+    super({ ...opts, label: opts.label || 'codebuddy' });
+  }
+
+  resolveURL() {
+    return `${this.baseURL}/v2/chat/completions`;
+  }
+
+  buildHeaders() {
+    return {
+      ...super.buildHeaders(),
+      ...buildCliHeaders(this.apiKey),
+    };
+  }
 }
