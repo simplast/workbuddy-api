@@ -18,22 +18,26 @@ export function normalizeSSEData(dataStr) {
     if (choice) {
       const delta = choice.delta || {};
 
-      if (delta.reasoning_content === '') delete delta.reasoning_content;
-      if (delta.content === '') delete delta.content;
+      if (delta.reasoning_content === "") delete delta.reasoning_content;
+      if (delta.content === "") delete delta.content;
       if (
         delta.function_call == null ||
-        (delta.function_call.name === '' && delta.function_call.arguments === '')
+        (delta.function_call.name === "" &&
+          delta.function_call.arguments === "")
       ) {
         delete delta.function_call;
       }
-      if (delta.refusal === '') delete delta.refusal;
+      if (delta.refusal === "") delete delta.refusal;
       if (delta.extra_fields == null) delete delta.extra_fields;
-      if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) delete delta.tool_calls;
+      if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0)
+        delete delta.tool_calls;
 
-      if (choice.finish_reason === '') choice.finish_reason = null;
+      if (choice.finish_reason === "") choice.finish_reason = null;
     }
     return JSON.stringify(obj);
-  } catch { /* not JSON, pass through */ }
+  } catch {
+    /* not JSON, pass through */
+  }
   return dataStr;
 }
 
@@ -41,9 +45,12 @@ export function normalizeSSEData(dataStr) {
  * Read SSE stream and parse chunks, calling callbacks for each event.
  * Handles watchdog timeout and cleanup.
  */
-export async function readSSEStream(reader, { onChunk, onDone, onError, timeoutMs = 120_000 }) {
+export async function readSSEStream(
+  reader,
+  { onChunk, onDone, onError, timeoutMs = 120_000 },
+) {
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = "";
   let lastDataTime = Date.now();
   let timedOut = false;
 
@@ -51,7 +58,9 @@ export async function readSSEStream(reader, { onChunk, onDone, onError, timeoutM
     if (Date.now() - lastDataTime > timeoutMs) {
       console.error(`[stream timeout] no data for ${timeoutMs}ms`);
       timedOut = true;
-      try { reader.cancel(); } catch {}
+      try {
+        reader.cancel();
+      } catch {}
       clearInterval(watchdog);
     }
   }, 10_000);
@@ -63,30 +72,32 @@ export async function readSSEStream(reader, { onChunk, onDone, onError, timeoutM
       lastDataTime = Date.now();
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
 
       for (const line of lines) {
         const trimmed = line.trim();
         const dataMatch = trimmed.match(/^data:\s?(.*)$/);
         if (!dataMatch) continue;
         const data = dataMatch[1];
-        if (data === '[DONE]') {
+        if (data === "[DONE]") {
           onDone?.();
           continue;
         }
         try {
           const parsed = JSON.parse(data);
           onChunk?.(parsed);
-        } catch { /* skip malformed chunks */ }
+        } catch {
+          /* skip malformed chunks */
+        }
       }
     }
-    if (timedOut) onError?.(new Error('Stream timeout'));
+    if (timedOut) onError?.(new Error("Stream timeout"));
   } catch (e) {
     // reader.cancel() from the watchdog surfaces here as an AbortError.
     // Report the timeout once; suppress the duplicate cancel-induced rejection.
     if (!timedOut) onError?.(e);
-    else onError?.(new Error('Stream timeout'));
+    else onError?.(new Error("Stream timeout"));
   } finally {
     clearInterval(watchdog);
   }
@@ -105,12 +116,12 @@ export function sseEvent(event, obj) {
  * Returns { fullContent, fullReasoning, toolCalls, lastChunk, id, model, created, usage }.
  */
 export function aggregateSSEChunks() {
-  let fullContent = '';
-  let fullReasoning = '';
+  let fullContent = "";
+  let fullReasoning = "";
   let toolCalls = [];
   let lastChunk = null;
-  let id = '';
-  let model = '';
+  let id = "";
+  let model = "";
   let created = 0;
   let usage = null;
 
@@ -118,7 +129,7 @@ export function aggregateSSEChunks() {
     lastChunk = parsed;
     if (parsed.id) id = parsed.id;
     if (parsed.model) model = parsed.model;
-    if (typeof parsed.created === 'number') created = parsed.created;
+    if (typeof parsed.created === "number") created = parsed.created;
     if (parsed.usage) usage = parsed.usage;
 
     const choice = parsed.choices?.[0];
@@ -132,11 +143,17 @@ export function aggregateSSEChunks() {
       for (const tc of delta.tool_calls) {
         const idx = tc.index ?? toolCalls.length;
         if (!toolCalls[idx]) {
-          toolCalls[idx] = { id: tc.id || '', type: 'function', function: { name: '', arguments: '' } };
+          toolCalls[idx] = {
+            id: tc.id || "",
+            type: "function",
+            function: { name: "", arguments: "" },
+          };
         }
         if (tc.id) toolCalls[idx].id = tc.id;
-        if (tc.function?.name && !toolCalls[idx].function.name) toolCalls[idx].function.name = tc.function.name;
-        if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+        if (tc.function?.name && !toolCalls[idx].function.name)
+          toolCalls[idx].function.name = tc.function.name;
+        if (tc.function?.arguments)
+          toolCalls[idx].function.arguments += tc.function.arguments;
       }
     }
   };

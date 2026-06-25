@@ -97,7 +97,9 @@ const result = await local.chat('default-model-lite').generate('Hello');
 
 ## 更多文档
 
+- [docs/codebuddy-protocol-analysis.md](docs/codebuddy-protocol-analysis.md) — CodeBuddy CLI OpenAI 协议逆向分析（自定义字段、多模型适配、请求头伪装等）
 - [docs/provider-guide.md](docs/provider-guide.md) — Provider 架构详解与新增指南
 - [docs/design-decisions.md](docs/design-decisions.md) — 关键设计决策（SSE 清洗、Anthropic 转换等）
+- [docs/request-paths.md](docs/request-paths.md) — 3 条请求链路详解
 
 *（内容由AI生成，仅供参考）*
