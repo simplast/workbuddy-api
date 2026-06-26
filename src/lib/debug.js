@@ -47,16 +47,32 @@ export function dumpRequest(prefix, requestId, upstreamBody) {
       console.log(`\x1b[33m[req dump]\x1b[0m system prompt ${typeof sys.content === 'string' ? sys.content.length : JSON.stringify(sys.content).length} chars: ${preview}...`);
     }
 
+    // Extract thinking/reasoning info from the request
+    const thinkingInfo = [];
+    // OpenAI: reasoning_effort (low/medium/high)
+    if (upstreamBody.reasoning_effort != null) {
+      thinkingInfo.push(`reasoning_effort=${upstreamBody.reasoning_effort}`);
+    }
+    // Anthropic: thinking budget_tokens or enabled
+    if (upstreamBody.thinking != null) {
+      const t = upstreamBody.thinking;
+      if (typeof t === 'object') {
+        const parts = [];
+        if (t.type) parts.push(`type=${t.type}`);
+        if (t.budget_tokens != null) parts.push(`budget=${t.budget_tokens}`);
+        thinkingInfo.push(`thinking={${parts.join(',')}}`);
+      } else {
+        thinkingInfo.push(`thinking=${JSON.stringify(t)}`);
+      }
+    }
+
     const topKeys = {};
     for (const k of Object.keys(upstreamBody)) {
-      if (k === 'messages' || k === 'tools') continue;
+      if (k === 'messages' || k === 'tools' || k === 'thinking') continue;
       topKeys[k] = upstreamBody[k];
     }
-    console.log(`\x1b[33m[req dump]\x1b[0m ${msgs.length} messages, ${upstreamBody.tools?.length ?? 0} tools, top-keys: ${JSON.stringify(topKeys)} → saved (id=${requestId})`);
-
-    if (upstreamBody.reasoning_effort) {
-      console.log(`\x1b[36m[${prefix}]\x1b[0m reasoning_effort=${upstreamBody.reasoning_effort} → upstream`);
-    }
+    const thinkingStr = thinkingInfo.length > 0 ? ` \x1b[35m🧠 ${thinkingInfo.join(' ')}\x1b[0m` : '';
+    console.log(`\x1b[33m[req dump]\x1b[0m ${msgs.length} messages, ${upstreamBody.tools?.length ?? 0} tools, top-keys: ${JSON.stringify(topKeys)}${thinkingStr} → saved (id=${requestId})`);
   } catch { /* ignore */ }
 }
 

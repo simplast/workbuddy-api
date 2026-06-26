@@ -1,10 +1,19 @@
-import { config } from '../config.js';
-import { fetchUpstream, providerFor } from '../lib/upstream.js';
-import { logRequest } from '../lib/logger.js';
-import { replaceSystemPrompt, filterContentMessages } from '../lib/prompt.js';
-import { normalizeOpenAIMessages } from '../lib/normalize.js';
-import { readSSEStream, aggregateSSEChunks, normalizeSSEData } from '../lib/sse.js';
-import { makeRequestId, dumpRequest, saveOpenAIStreamDebugLog, saveOpenAINonStreamDebugLog } from '../lib/debug.js';
+import { config } from "../config.js";
+import { fetchUpstream, providerFor } from "../lib/upstream.js";
+import { logRequest } from "../lib/logger.js";
+import { replaceSystemPrompt, filterContentMessages } from "../lib/prompt.js";
+import { normalizeOpenAIMessages } from "../lib/normalize.js";
+import {
+  readSSEStream,
+  aggregateSSEChunks,
+  normalizeSSEData,
+} from "../lib/sse.js";
+import {
+  makeRequestId,
+  dumpRequest,
+  saveOpenAIStreamDebugLog,
+  saveOpenAINonStreamDebugLog,
+} from "../lib/debug.js";
 
 /**
  * POST /v1/chat/completions — OpenAI-compatible endpoint
@@ -19,20 +28,50 @@ export async function handleChatCompletions(req, res) {
   const startTime = Date.now();
   const reqModel = req.body.model || config.defaultModel;
   const provider = providerFor(reqModel);
-  const isCodeBuddy = provider.name === 'codebuddy';
+  const isCodeBuddy = provider.name === "codebuddy";
   const wantStream = req.body.stream === true;
+
+  // TEMP: dump all req.body keys to find reasoning params
+  console.log(
+    "\x1b[35m[RAW BODY KEYS]\x1b[0m",
+    Object.keys(req.body)
+      .filter((k) => k !== "messages" && k !== "tools")
+      .map((k) => `${k}=${JSON.stringify(req.body[k])}`)
+      .join(", "),
+  );
 
   const requestId = makeRequestId();
 
   if (isCodeBuddy) {
-    return handleCodeBuddyRequest({ req, res, reqModel, wantStream, startTime, requestId });
+    return handleCodeBuddyRequest({
+      req,
+      res,
+      reqModel,
+      wantStream,
+      startTime,
+      requestId,
+    });
   } else {
-    return handlePassthroughRequest({ req, res, reqModel, wantStream, startTime, requestId });
+    return handlePassthroughRequest({
+      req,
+      res,
+      reqModel,
+      wantStream,
+      startTime,
+      requestId,
+    });
   }
 }
 
 // ─── Path A: non-CodeBuddy providers — pure passthrough ────────────────
-async function handlePassthroughRequest({ req, res, reqModel, wantStream, startTime, requestId }) {
+async function handlePassthroughRequest({
+  req,
+  res,
+  reqModel,
+  wantStream,
+  startTime,
+  requestId,
+}) {
   // Forward the original body; model-name alias resolution is handled by
   // fetchUpstream → provider.preRequest() which maps the model but preserves
   // everything else (stream flag, messages, tools, temperature, etc.)
@@ -40,36 +79,48 @@ async function handlePassthroughRequest({ req, res, reqModel, wantStream, startT
   if (!body.model) body.model = reqModel;
 
   // Debug dump — log what is actually being sent upstream
-  dumpRequest('openai-passthrough', requestId, body);
+  dumpRequest("openai-passthrough", requestId, body);
 
   let upstream;
   try {
     upstream = await fetchUpstream(body);
   } catch (err) {
-    console.error('[proxy error]', err?.message || err);
-    return res.status(500).json({ error: { message: err?.message || 'Internal proxy error', type: 'proxy_error' } });
+    console.error("[proxy error]", err?.message || err);
+    return res
+      .status(500)
+      .json({
+        error: {
+          message: err?.message || "Internal proxy error",
+          type: "proxy_error",
+        },
+      });
   }
 
   if (!upstream.ok) {
     const errText = await upstream.text();
     console.error(`[upstream ${upstream.status}]`, errText);
-    return res.status(upstream.status).setHeader('content-type', 'application/json').send(errText);
+    return res
+      .status(upstream.status)
+      .setHeader("content-type", "application/json")
+      .send(errText);
   }
 
   // Forward response headers for streaming vs non-streaming
   if (wantStream) {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
   } else {
-    res.setHeader('Content-Type', 'application/json');
+    res.setHeader("Content-Type", "application/json");
   }
 
   // Propagate client disconnect upstream
-  res.on('close', () => {
+  res.on("close", () => {
     if (res.writableEnded) return;
-    try { upstream.body.cancel?.(); } catch {}
+    try {
+      upstream.body.cancel?.();
+    } catch {}
   });
 
   // Pipe raw bytes from upstream to client
@@ -79,8 +130,10 @@ async function handlePassthroughRequest({ req, res, reqModel, wantStream, startT
     let lastDataTime = Date.now();
     const watchdog = setInterval(() => {
       if (Date.now() - lastDataTime > TIMEOUT) {
-        console.error('[stream timeout] passthrough no data');
-        try { reader.cancel(); } catch {}
+        console.error("[stream timeout] passthrough no data");
+        try {
+          reader.cancel();
+        } catch {}
         clearInterval(watchdog);
       }
     }, 10_000);
@@ -93,7 +146,7 @@ async function handlePassthroughRequest({ req, res, reqModel, wantStream, startT
     }
     clearInterval(watchdog);
   } catch (e) {
-    console.error('[passthrough pipe error]', e.message);
+    console.error("[passthrough pipe error]", e.message);
   }
 
   res.end();
@@ -101,7 +154,14 @@ async function handlePassthroughRequest({ req, res, reqModel, wantStream, startT
 }
 
 // ─── Path B: CodeBuddy upstream — full adaptation stack ────────────────
-async function handleCodeBuddyRequest({ req, res, reqModel, wantStream, startTime, requestId }) {
+async function handleCodeBuddyRequest({
+  req,
+  res,
+  reqModel,
+  wantStream,
+  startTime,
+  requestId,
+}) {
   // CodeBuddy backend is streaming-only; force stream + usage reporting
   // on the upstream request regardless of what the client asked for.
   const upstreamBody = {
@@ -118,37 +178,81 @@ async function handleCodeBuddyRequest({ req, res, reqModel, wantStream, startTim
     upstreamBody.messages = filterContentMessages(upstreamBody.messages);
   }
 
-  dumpRequest('openai-codebuddy', requestId, upstreamBody);
+  // Inject thinking/reasoning params for models that support it.
+  // The downstream (Claude Code via cc-switch) doesn't pass reasoning_effort
+  // to OpenAI-compatible endpoints, so we add it based on model prefix.
+  //
+  // IMPORTANT: Use reasoning_effort (not thinking.type), because
+  // copilot.tencent.com/v2 runs its own ThinkingFormatTranslatorRule which
+  // converts reasoning_effort → provider-native format internally.
+  // Passing thinking directly bypasses that translation and doesn't work.
+  // See docs/codebuddy-thinking-analysis.md for details.
+  if (
+    !upstreamBody.reasoning_effort &&
+    !upstreamBody.thinking &&
+    !upstreamBody.reasoning
+  ) {
+    injectThinkingParams(upstreamBody);
+  }
+
+  dumpRequest("openai-codebuddy", requestId, upstreamBody);
 
   try {
     const upstream = await fetchUpstream(upstreamBody);
     if (!upstream.ok) {
       const errText = await upstream.text();
       console.error(`[upstream ${upstream.status}]`, errText);
-      return res.status(upstream.status).json({ error: { message: errText, type: 'upstream_error' } });
+      return res
+        .status(upstream.status)
+        .json({ error: { message: errText, type: "upstream_error" } });
     }
 
     if (wantStream) {
-      return pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, requestId });
+      return pipeCodeBuddyStream({
+        res,
+        upstream,
+        upstreamBody,
+        startTime,
+        requestId,
+      });
     } else {
-      return aggregateCodeBuddyNonStream({ res, upstream, upstreamBody, startTime, requestId });
+      return aggregateCodeBuddyNonStream({
+        res,
+        upstream,
+        upstreamBody,
+        startTime,
+        requestId,
+      });
     }
   } catch (err) {
-    console.error('[proxy error]', err?.message || err);
-    res.status(500).json({ error: { message: err?.message || 'Internal proxy error', type: 'proxy_error' } });
+    console.error("[proxy error]", err?.message || err);
+    res
+      .status(500)
+      .json({
+        error: {
+          message: err?.message || "Internal proxy error",
+          type: "proxy_error",
+        },
+      });
   }
 }
 
 // ─── CodeBuddy streaming: SSE parsing + field normalization + passthrough
-async function pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, requestId }) {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
+async function pipeCodeBuddyStream({
+  res,
+  upstream,
+  upstreamBody,
+  startTime,
+  requestId,
+}) {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
 
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
-  let pipeBuf = '';
+  let pipeBuf = "";
   let pipeLogLines = [];
   let streamUsage = null;
   let streamModel = upstreamBody.model;
@@ -157,15 +261,17 @@ async function pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, req
   let aborted = false;
 
   // Debug aggregation state
-  let _fullContent = '';
-  let _fullReasoning = '';
+  let _fullContent = "";
+  let _fullReasoning = "";
   let _toolCalls = [];
   let _finishReason = null;
 
-  res.on('close', () => {
+  res.on("close", () => {
     if (res.writableEnded) return;
     aborted = true;
-    try { reader.cancel(); } catch {}
+    try {
+      reader.cancel();
+    } catch {}
   });
 
   function writeDataEvent(dataStr) {
@@ -179,7 +285,9 @@ async function pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, req
     if (Date.now() - lastDataTime > STREAM_TIMEOUT) {
       console.error(`[stream timeout] no data for ${STREAM_TIMEOUT}ms`);
       aborted = true;
-      try { reader.cancel(); } catch {}
+      try {
+        reader.cancel();
+      } catch {}
       clearInterval(watchdog);
     }
   }, 10_000);
@@ -192,8 +300,8 @@ async function pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, req
       const chunk = decoder.decode(value, { stream: true });
 
       pipeBuf += chunk;
-      const pipeLines = pipeBuf.split('\n');
-      pipeBuf = pipeLines.pop() || '';
+      const pipeLines = pipeBuf.split("\n");
+      pipeBuf = pipeLines.pop() || "";
 
       for (const line of pipeLines) {
         const trimmed = line.trim();
@@ -206,9 +314,9 @@ async function pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, req
         }
 
         const dataStr = dataMatch[1];
-        if (dataStr === '[DONE]') {
+        if (dataStr === "[DONE]") {
           sentDone = true;
-          writeDataEvent('[DONE]');
+          writeDataEvent("[DONE]");
           continue;
         }
 
@@ -225,9 +333,9 @@ async function pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, req
       const dataMatch = trimmed.match(/^data:\s?(.*)$/);
       if (dataMatch) {
         const dataStr = dataMatch[1];
-        if (dataStr === '[DONE]') {
+        if (dataStr === "[DONE]") {
           sentDone = true;
-          writeDataEvent('[DONE]');
+          writeDataEvent("[DONE]");
         } else {
           writeDataEvent(normalizeSSEData(dataStr));
         }
@@ -236,29 +344,40 @@ async function pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, req
       }
     }
   } catch (e) {
-    console.error('[stream pipe error]', e.message);
+    console.error("[stream pipe error]", e.message);
     try {
-      const errChunk = { error: { message: e.message, type: 'stream_error' } };
+      const errChunk = { error: { message: e.message, type: "stream_error" } };
       res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
     } catch {}
   } finally {
     clearInterval(watchdog);
   }
 
-  if (!sentDone && !aborted) { writeDataEvent('[DONE]'); }
+  if (!sentDone && !aborted) {
+    writeDataEvent("[DONE]");
+  }
   res.end();
 
-  saveOpenAIStreamDebugLog(requestId, streamModel, _finishReason, _fullContent, _fullReasoning, _toolCalls, streamUsage, pipeLogLines);
+  saveOpenAIStreamDebugLog(
+    requestId,
+    streamModel,
+    _finishReason,
+    _fullContent,
+    _fullReasoning,
+    _toolCalls,
+    streamUsage,
+    pipeLogLines,
+  );
   logRequest({ model: streamModel, startTime, usage: streamUsage });
 
   function aggregateChunkForDebug(chunk) {
-    const lines = chunk.split('\n');
+    const lines = chunk.split("\n");
     for (const sl of lines) {
       const t = sl.trim();
       const dataMatch = t.match(/^data:\s?(.*)$/);
       if (!dataMatch) continue;
       const d = dataMatch[1];
-      if (d === '[DONE]') continue;
+      if (d === "[DONE]") continue;
       try {
         const p = JSON.parse(d);
         if (p.model) streamModel = p.model;
@@ -268,24 +387,40 @@ async function pipeCodeBuddyStream({ res, upstream, upstreamBody, startTime, req
           const delta = choice.delta || {};
           if (choice.finish_reason) _finishReason = choice.finish_reason;
           if (delta.content) _fullContent += delta.content;
-          if (delta.reasoning_content) _fullReasoning += delta.reasoning_content;
+          if (delta.reasoning_content)
+            _fullReasoning += delta.reasoning_content;
           if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
               const idx = tc.index ?? _toolCalls.length;
-              if (!_toolCalls[idx]) _toolCalls[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
+              if (!_toolCalls[idx])
+                _toolCalls[idx] = {
+                  id: "",
+                  type: "function",
+                  function: { name: "", arguments: "" },
+                };
               if (tc.id) _toolCalls[idx].id = tc.id;
-              if (tc.function?.name && !_toolCalls[idx].function.name) _toolCalls[idx].function.name = tc.function.name;
-              if (tc.function?.arguments) _toolCalls[idx].function.arguments += tc.function.arguments;
+              if (tc.function?.name && !_toolCalls[idx].function.name)
+                _toolCalls[idx].function.name = tc.function.name;
+              if (tc.function?.arguments)
+                _toolCalls[idx].function.arguments += tc.function.arguments;
             }
           }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   }
 }
 
 // ─── CodeBuddy non-streaming: aggregate SSE → single JSON response ─────
-async function aggregateCodeBuddyNonStream({ res, upstream, upstreamBody, startTime, requestId }) {
+async function aggregateCodeBuddyNonStream({
+  res,
+  upstream,
+  upstreamBody,
+  startTime,
+  requestId,
+}) {
   const reader = upstream.body.getReader();
   const agg = aggregateSSEChunks();
 
@@ -293,24 +428,109 @@ async function aggregateCodeBuddyNonStream({ res, upstream, upstreamBody, startT
     onChunk: (parsed) => agg.handleChunk(parsed),
   });
 
-  const { fullContent, fullReasoning, toolCalls, lastChunk, id, model, created } = agg.getResult();
+  const {
+    fullContent,
+    fullReasoning,
+    toolCalls,
+    lastChunk,
+    id,
+    model,
+    created,
+  } = agg.getResult();
 
-  const finishReason = lastChunk?.choices?.[0]?.finish_reason || 'stop';
-  const usage = lastChunk?.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  const finishReason = lastChunk?.choices?.[0]?.finish_reason || "stop";
+  const usage = lastChunk?.usage || {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+  };
 
-  const message = { role: 'assistant', content: fullContent || null };
+  const message = { role: "assistant", content: fullContent || null };
   if (fullReasoning) message.reasoning_content = fullReasoning;
   if (toolCalls.length > 0) message.tool_calls = toolCalls;
 
   res.json({
     id,
-    object: 'chat.completion',
+    object: "chat.completion",
     created: created || Math.floor(Date.now() / 1000),
     model,
     choices: [{ index: 0, message, finish_reason: finishReason }],
     usage,
   });
 
-  saveOpenAINonStreamDebugLog(requestId, id, model, finishReason, fullContent, fullReasoning, toolCalls, usage);
+  saveOpenAINonStreamDebugLog(
+    requestId,
+    id,
+    model,
+    finishReason,
+    fullContent,
+    fullReasoning,
+    toolCalls,
+    usage,
+  );
   logRequest({ model, startTime, usage });
+}
+
+// ─── Thinking params injection ─────────────────────────────────────────
+//
+// CodeBuddy backend (copilot.tencent.com/v2/chat/completions) uses
+// ThinkingFormatTranslatorRule internally, which expects reasoning_effort
+// as input and converts it to the provider-native format (e.g. for DeepSeek
+// it becomes thinking: { type: "enabled" }).
+//
+// We therefore inject reasoning_effort (the OpenAI-standard field) rather
+// than trying to guess the provider-native format. The backend handles
+// the translation.
+//
+// See docs/codebuddy-thinking-analysis.md for the full analysis.
+const THINKING_RULES = [
+  {
+    prefix: "deepseek",
+    apply: (b) => {
+      b.reasoning_effort = "high";
+    },
+  },
+  {
+    prefix: "glm",
+    apply: (b) => {
+      b.reasoning_effort = "high";
+    },
+  },
+  {
+    prefix: "minimax",
+    apply: (b) => {
+      b.reasoning_effort = "high";
+    },
+  },
+  {
+    prefix: "kimi",
+    apply: (b) => {
+      b.reasoning_effort = "high";
+    },
+  },
+  {
+    prefix: "moonshot",
+    apply: (b) => {
+      b.reasoning_effort = "high";
+    },
+  },
+  {
+    prefix: "qwen",
+    apply: (b) => {
+      b.reasoning_effort = "high";
+    },
+  },
+];
+
+function injectThinkingParams(body) {
+  const model = (body.model || "").toLowerCase();
+  for (const rule of THINKING_RULES) {
+    if (model.startsWith(rule.prefix)) {
+      rule.apply(body);
+      console.log(
+        `\x1b[35m[thinking]\x1b[0m injected reasoning_effort=${body.reasoning_effort} for ${body.model}`,
+      );
+      return;
+    }
+  }
 }
