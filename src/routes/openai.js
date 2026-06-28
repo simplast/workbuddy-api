@@ -162,10 +162,14 @@ async function handleCodeBuddyRequest({
   };
 
   // CodeBuddy backend (Go) only accepts tool_choice as a plain string
-  // ("auto"/"none"/"required"/"tool-name"). Drop object-format values
-  // like { type: "function", function: { name: "xxx" } }.
+  // ("auto"/"none"/"required"/"tool-name"). Convert object-format values
+  // like { type: "function", function: { name: "xxx" } } → "xxx".
   if (upstreamBody.tool_choice != null && typeof upstreamBody.tool_choice !== "string") {
-    delete upstreamBody.tool_choice;
+    if (upstreamBody.tool_choice?.type === "function" && upstreamBody.tool_choice?.function?.name) {
+      upstreamBody.tool_choice = upstreamBody.tool_choice.function.name;
+    } else {
+      delete upstreamBody.tool_choice;
+    }
   }
 
   // CodeBuddy-specific message pre-processing
