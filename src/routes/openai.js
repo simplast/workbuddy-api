@@ -13,6 +13,7 @@ import {
   dumpRequest,
   saveOpenAIStreamDebugLog,
   saveOpenAINonStreamDebugLog,
+  CAPTURE_FULL_SSE_DEBUG,
 } from "../lib/debug.js";
 
 /**
@@ -86,14 +87,12 @@ async function handlePassthroughRequest({
     upstream = await fetchUpstream(body);
   } catch (err) {
     console.error("[proxy error]", err?.message || err);
-    return res
-      .status(500)
-      .json({
-        error: {
-          message: err?.message || "Internal proxy error",
-          type: "proxy_error",
-        },
-      });
+    return res.status(500).json({
+      error: {
+        message: err?.message || "Internal proxy error",
+        type: "proxy_error",
+      },
+    });
   }
 
   if (!upstream.ok) {
@@ -226,14 +225,12 @@ async function handleCodeBuddyRequest({
     }
   } catch (err) {
     console.error("[proxy error]", err?.message || err);
-    res
-      .status(500)
-      .json({
-        error: {
-          message: err?.message || "Internal proxy error",
-          type: "proxy_error",
-        },
-      });
+    res.status(500).json({
+      error: {
+        message: err?.message || "Internal proxy error",
+        type: "proxy_error",
+      },
+    });
   }
 }
 
@@ -253,7 +250,7 @@ async function pipeCodeBuddyStream({
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
   let pipeBuf = "";
-  let pipeLogLines = [];
+  let pipeLogLines = CAPTURE_FULL_SSE_DEBUG ? [] : null;
   let streamUsage = null;
   let streamModel = upstreamBody.model;
   let sentDone = false;
@@ -276,7 +273,7 @@ async function pipeCodeBuddyStream({
 
   function writeDataEvent(dataStr) {
     const line = `data: ${dataStr}\n\n`;
-    pipeLogLines.push(line);
+    if (pipeLogLines) pipeLogLines.push(line);
     res.write(line);
   }
 
