@@ -46,10 +46,8 @@ function detectCliVersion() {
       const ver = JSON.parse(fs.readFileSync(pkgPath, "utf8")).version;
       if (ver) CLI_VERSION = ver;
     }
-  } catch (e) {
-    console.warn(
-      `  [codebuddy] Failed to detect CLI version, using fallback ${CLI_VERSION}: ${e.message}`,
-    );
+  } catch {
+    // Detection failure is non-fatal — fall back to bundled version silently
   }
 }
 

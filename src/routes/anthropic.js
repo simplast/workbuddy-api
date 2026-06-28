@@ -35,7 +35,7 @@ export async function handleMessages(req, res) {
 
   if (!upstream.ok) {
     const errText = await upstream.text();
-    return res.status(upstream.status).setHeader('content-type', 'application/json').send(errText);
+    return res.status(upstream.status).setHeader('content-type', 'application/json').send(JSON.stringify({ error: { message: `Upstream error (${upstream.status})`, type: "upstream_error" } }));
   }
 
   if (wantStream) {

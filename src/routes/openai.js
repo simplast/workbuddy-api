@@ -92,7 +92,7 @@ async function handlePassthroughRequest({
     return res
       .status(upstream.status)
       .setHeader("content-type", "application/json")
-      .send(errText);
+      .send(JSON.stringify({ error: { message: `Upstream error (${upstream.status})`, type: "upstream_error" } }));
   }
 
   // Forward response headers for streaming vs non-streaming
@@ -194,7 +194,7 @@ async function handleCodeBuddyRequest({
       console.error(`[upstream ${upstream.status}]`, errText);
       return res
         .status(upstream.status)
-        .json({ error: { message: errText, type: "upstream_error" } });
+        .json({ error: { message: `Upstream error (${upstream.status})`, type: "upstream_error" } });
     }
 
     if (wantStream) {
