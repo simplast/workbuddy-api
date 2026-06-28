@@ -161,6 +161,13 @@ async function handleCodeBuddyRequest({
     stream_options: { include_usage: true },
   };
 
+  // CodeBuddy backend (Go) only accepts tool_choice as a plain string
+  // ("auto"/"none"/"required"/"tool-name"). Drop object-format values
+  // like { type: "function", function: { name: "xxx" } }.
+  if (upstreamBody.tool_choice != null && typeof upstreamBody.tool_choice !== "string") {
+    delete upstreamBody.tool_choice;
+  }
+
   // CodeBuddy-specific message pre-processing
   if (upstreamBody.messages) {
     normalizeOpenAIMessages(upstreamBody.messages);

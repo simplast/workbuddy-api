@@ -37,7 +37,6 @@ export function replaceSystemPrompt(messages) {
   } else {
     messages.unshift({ role: 'system', content: prompt });
   }
-  }
   return messages;
 }
 
