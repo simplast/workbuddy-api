@@ -1,14 +1,3 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 1eca7343fe74c65971d664cb7d303a44_4815474966e711f1aa625254006c9bbf
-    ReservedCode1: uPdmawfAdNNBQxvnPU02slibBzFnASYiHZUF5R/9xjIwqlWtAulrGuyzAdIPeja3omCY+h8WZPKHHzdAh0m7a6Yn0nPwLh/peXi/Xf8Z+kLktAQjATQ9MuuiXQgT6jZxeWH29iIdy92jTfikhHYAfWDMRAMq0hAjTXMOGGJWDWodagfa1+1FKenue/8=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 1eca7343fe74c65971d664cb7d303a44_4815474966e711f1aa625254006c9bbf
-    ReservedCode2: uPdmawfAdNNBQxvnPU02slibBzFnASYiHZUF5R/9xjIwqlWtAulrGuyzAdIPeja3omCY+h8WZPKHHzdAh0m7a6Yn0nPwLh/peXi/Xf8Z+kLktAQjATQ9MuuiXQgT6jZxeWH29iIdy92jTfikhHYAfWDMRAMq0hAjTXMOGGJWDWodagfa1+1FKenue/8=
----
-
 # AGENT.md — workbuddy-api
 
 ## 项目定位

@@ -1,4 +1,7 @@
 /**
+ * @deprecated Since refactoring to pure passthrough on /v1/messages.
+ * Kept for reference alongside anthropic.js.
+ *
  * OpenAI → Anthropic response conversion.
  * Pure conversion functions — no I/O, no side effects.
  */

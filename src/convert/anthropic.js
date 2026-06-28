@@ -1,4 +1,9 @@
 /**
+ * @deprecated Since refactoring to pure passthrough on /v1/messages.
+ * This module is no longer used by any route handler. It is kept for
+ * reference — if you need Anthropic ↔ OpenAI conversion in the future,
+ * the logic is here and tested.
+ *
  * Anthropic Messages API ↔ OpenAI Chat Completions 格式转换
  * Pure conversion functions — no I/O, no side effects.
  */

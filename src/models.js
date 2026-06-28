@@ -11,13 +11,17 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import zlib from 'node:zlib';
 
-const CODEBUDDY_DIR = path.join(process.env.HOME || '~', '.codebuddy');
+const HOME = process.env.HOME || process.env.USERPROFILE || '~';
+const CODEBUDDY_DIR = path.join(HOME, '.codebuddy');
 const LOCAL_STORAGE_DIR = path.join(CODEBUDDY_DIR, 'local_storage');
+
+// CLI executable lookup — which (Unix) / where (Windows)
+const WHICH_CMD = process.platform === 'win32' ? 'where' : 'which';
 
 // 找到 CLI 安装目录
 function findCliDir() {
   try {
-    const binPath = execSync('which codebuddy 2>/dev/null || which cbc 2>/dev/null', { encoding: 'utf8' }).trim();
+    const binPath = execSync(`${WHICH_CMD} codebuddy 2>${process.platform === 'win32' ? 'NUL' : '/dev/null'} || ${WHICH_CMD} cbc 2>${process.platform === 'win32' ? 'NUL' : '/dev/null'}`, { encoding: 'utf8' }).trim();
     if (binPath) {
       // bin/codebuddy -> 包的根目录
       const realPath = fs.realpathSync(binPath);

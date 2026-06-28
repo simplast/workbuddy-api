@@ -14,10 +14,11 @@ import { execSync } from "node:child_process";
 import { OpenAIProvider } from "./base.js";
 
 // ─── CLI version & SDK info (lazy: detected on first request) ───────────
-const FALLBACK_CLI_VERSION = "2.110.0";
+const FALLBACK_CLI_VERSION = process.env.CODEBUDDY_CLI_VERSION || "2.110.0";
 let CLI_VERSION = FALLBACK_CLI_VERSION;
 let _cliVersionDetected = false;
 const SDK_VERSION = "6.25.0";
+const WHICH_CMD = process.platform === "win32" ? "where" : "which";
 
 function detectCliVersion() {
   if (_cliVersionDetected) return;
@@ -31,8 +32,9 @@ function detectCliVersion() {
   }
 
   try {
+    const nullRedirect = process.platform === "win32" ? "2>NUL" : "2>/dev/null";
     const raw = execSync(
-      "which codebuddy 2>/dev/null || which cbc 2>/dev/null",
+      `${WHICH_CMD} codebuddy ${nullRedirect} || ${WHICH_CMD} cbc ${nullRedirect}`,
       { encoding: "utf8" },
     ).trim();
     if (raw) {

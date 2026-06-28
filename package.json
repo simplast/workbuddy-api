@@ -1,16 +1,34 @@
 {
   "name": "workbuddy-api",
   "version": "1.0.0",
-  "description": "CodeBuddy local API proxy via Vercel AI SDK",
+  "description": "Local proxy that connects OpenAI-compatible clients to CodeBuddy and other AI providers",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node --max-old-space-size=256 src/index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "openai",
+    "anthropic",
+    "codebuddy",
+    "proxy",
+    "api",
+    "chat",
+    "completions"
+  ],
+  "author": "workbuddy contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/workbuddy/workbuddy-api"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "src/"
+  ],
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^5.2.1"
