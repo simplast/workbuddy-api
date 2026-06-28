@@ -515,9 +515,6 @@ function injectThinkingParams(body) {
   for (const rule of THINKING_RULES) {
     if (model.startsWith(rule.prefix)) {
       rule.apply(body);
-      console.log(
-        `\x1b[35m[thinking]\x1b[0m injected reasoning_effort=${body.reasoning_effort} for ${body.model}`,
-      );
       return;
     }
   }
