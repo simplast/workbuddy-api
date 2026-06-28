@@ -27,7 +27,6 @@ class RateLimiter {
     this.refillInterval = 60_000 / rpm;
 
     this.backoffUntil = 0;
-    this.backoffMultiplier = 1;
     this.consecutive429Count = 0;
   }
 
@@ -70,13 +69,11 @@ class RateLimiter {
       MAX_BACKOFF_MS,
     );
     this.backoffUntil = Date.now() + backoffMs;
-    this.backoffMultiplier = Math.min(this.backoffMultiplier * BACKOFF_MULTIPLIER, 16);
     console.log(`\x1b[31m[rate-limit]\x1b[0m 429 received! Cooling down for ${Math.round(backoffMs / 60_000)} minutes (count=${this.consecutive429Count})`);
   }
 
   onSuccess() {
     this.consecutive429Count = 0;
-    this.backoffMultiplier = 1;
   }
 }
 
@@ -95,7 +92,6 @@ export class NvidiaProvider extends OpenAIProvider {
   /** Wait for a token before sending. */
   async preRequestAsync() {
     await this.limiter.acquire();
-    console.log(`\x1b[35m[nvidia]\x1b[0m model=${this.label} → ${this.resolveURL()}`);
   }
 
   on429() {

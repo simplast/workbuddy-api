@@ -3,3 +3,5 @@ node_modules/
 dist/
 logs/
 .DS_Store
+system-prompt.txt
+codebuddy-system-prompt.txt

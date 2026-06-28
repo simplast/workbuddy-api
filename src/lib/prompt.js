@@ -1,7 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SYSTEM_PROMPT_FILE = path.resolve('system-prompt.txt');
+/**
+ * Path to the optional system prompt override file.
+ * Set `SYSTEM_PROMPT_FILE` env var to customise; default is
+ * `system-prompt.txt` in the project root. The file is NOT included
+ * in the public repository — create one manually.
+ */
+const SYSTEM_PROMPT_FILE = process.env.SYSTEM_PROMPT_FILE
+  || path.resolve('system-prompt.txt');
 
 let _customSystemPrompt = null;
 let _loaded = false;

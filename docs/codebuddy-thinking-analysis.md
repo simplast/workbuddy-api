@@ -207,7 +207,7 @@ DeepSeek 模型配置中的 effort 映射：
 
 ## 参考
 
-- CodeBuddy CLI 源码包：`/tmp/codebuddy-code-src/package/dist/codebuddy.js`
+- CodeBuddy CLI 源码包（`dist/codebuddy.js` 中的 thinking 处理逻辑）
 - 模型配置缓存：`~/.codebuddy/local_storage/`
-- CLI 日志：`~/.codebuddy/logs/`
-- CLI traces：`~/.codebuddy/traces/`
+- CLI 日志：`~/.codebuddy/logs/`（如有）
+- CLI traces：`~/.codebuddy/traces/`（如有）

@@ -32,15 +32,6 @@ export async function handleChatCompletions(req, res) {
   const isCodeBuddy = provider.name === "codebuddy";
   const wantStream = req.body.stream === true;
 
-  // TEMP: dump all req.body keys to find reasoning params
-  console.log(
-    "\x1b[35m[RAW BODY KEYS]\x1b[0m",
-    Object.keys(req.body)
-      .filter((k) => k !== "messages" && k !== "tools")
-      .map((k) => `${k}=${JSON.stringify(req.body[k])}`)
-      .join(", "),
-  );
-
   const requestId = makeRequestId();
 
   if (isCodeBuddy) {

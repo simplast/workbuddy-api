@@ -11,7 +11,9 @@ const LOG_DIR = path.resolve("logs");
 const DEBUG_DIR = path.join(LOG_DIR, "requests");
 export const CAPTURE_FULL_SSE_DEBUG =
   process.env.DEBUG_CAPTURE_FULL_SSE === "1";
-export const ENABLE_DEBUG_DUMPS = process.env.ENABLE_DEBUG_DUMPS !== "0";
+// Default OFF — set to "1" to write per-request debug files (may contain
+// user message content). Auto-cleaned after 7 days / 1000 files.
+export const ENABLE_DEBUG_DUMPS = process.env.ENABLE_DEBUG_DUMPS === "1";
 
 function ensureDirs() {
   if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
