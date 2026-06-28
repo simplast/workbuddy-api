@@ -66,7 +66,7 @@ provider 层对**所有请求路径**都执行这些操作：
 ```bash
 # 启用 codebuddy（OpenAI + CLI 头 + 路由层适配）
 CODEBUDDY_API_KEY=...
-CODEBUDDY_MODELS=default-model,glm-5.1
+CODEBUDDY_MODELS=default,glm-5.1
 CODEBUDDY_TARGET_MODEL=actual-upstream-model
 
 # 启用 nvidia（OpenAI + 限流，路由层纯透传）

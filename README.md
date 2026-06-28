@@ -29,7 +29,7 @@ const local = createOpenAI({
   apiKey: "dummy", // proxy injects the real token
 });
 
-const result = await local.chat("default-model").generate("Hello");
+const result = await local.chat("default").generate("Hello");
 ```
 
 ## Providers
@@ -52,7 +52,7 @@ At least one provider API key is required.
 | `CODEBUDDY_API_KEY` | At least one | — | Enable CodeBuddy provider |
 | `NVIDIA_API_KEY` | At least one | — | Enable NVIDIA provider |
 | `CODEBUDDY_BASE_URL` | No | `https://www.codebuddy.ai` | Also: `https://copilot.tencent.com` (internal) |
-| `CODEBUDDY_MODELS` | No | `default-model` | Comma-separated model aliases |
+| `CODEBUDDY_MODELS` | No | `default` | Comma-separated model aliases |
 | `CODEBUDDY_TARGET_MODEL` | No | — | Real upstream model name |
 | `CODEBUDDY_CLI_VERSION` | No | `2.110.0` | Override auto-detected version |
 | `NVIDIA_BASE_URL` | No | `https://integrate.api.nvidia.com/v1` | |

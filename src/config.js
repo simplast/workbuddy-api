@@ -19,7 +19,7 @@ if (process.env.CODEBUDDY_API_KEY) {
   const aliases = (
     process.env.CODEBUDDY_MODELS ||
     process.env.DEFAULT_MODEL ||
-    "default-model"
+    "default"
   )
     .split(",")
     .map((s) => s.trim())
