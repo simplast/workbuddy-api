@@ -30,8 +30,13 @@ app.get("/v1/models", (_req, res) => {
       owned_by: "codebuddy",
       name: m.name,
       credits: m.credits,
-      supportsImages: m.supportsImages,
-      supportsReasoning: m.supportsReasoning,
+      description: m.description,
+      description_zh: m.descriptionZh,
+      max_input_tokens: m.maxInputTokens,
+      max_output_tokens: m.maxOutputTokens,
+      supports_images: m.supportsImages,
+      supports_tool_call: m.supportsToolCall,
+      supports_reasoning: m.supportsReasoning,
     })),
   });
 });

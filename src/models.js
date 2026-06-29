@@ -42,6 +42,8 @@ function extractModels(obj) {
       id: m.id,
       name: m.name || m.id,
       credits: m.credits || null,
+      description: m.descriptionEn || m.description || null,
+      descriptionZh: m.descriptionZh || null,
       maxInputTokens: m.maxInputTokens || null,
       maxOutputTokens: m.maxOutputTokens || null,
       supportsImages: m.supportsImages || false,
