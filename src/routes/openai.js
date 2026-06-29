@@ -422,10 +422,20 @@ async function aggregateCodeBuddyNonStream({
 }) {
   const reader = upstream.body.getReader();
   const agg = aggregateSSEChunks();
+  let streamError = null;
 
   await readSSEStream(reader, {
     onChunk: (parsed) => agg.handleChunk(parsed),
+    onError: (err) => { streamError = err; },
   });
+
+  // Stream errored (timeout or other failure) — propagate to client
+  if (streamError) {
+    console.error("[non-stream error]", streamError.message);
+    return res.status(500).json({
+      error: { message: streamError.message, type: "stream_error" },
+    });
+  }
 
   const {
     fullContent,
