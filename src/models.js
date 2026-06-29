@@ -1,19 +1,23 @@
 /**
  * 动态加载 CodeBuddy 模型列表
- * 
+ *
  * 来源优先级：
  * 1. ~/.codebuddy/local_storage/ 中的云端合并缓存（最完整，包含云端动态模型）
  * 2. CLI 包目录下的 product.internal.json / product.json（bundled 静态列表）
- * 3. 用户自定义 ~/.codebuddy/models.json
+ * 3. 内置兜底 builtin-models.json（随代码发布，从 product.internal.json 提取）
+ * 4. 用户自定义 ~/.codebuddy/models.json
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import zlib from 'node:zlib';
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '~';
 const CODEBUDDY_DIR = path.join(HOME, '.codebuddy');
 const LOCAL_STORAGE_DIR = path.join(CODEBUDDY_DIR, 'local_storage');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const BUILTIN_MODELS_PATH = path.join(__dirname, 'builtin-models.json');
 
 // CLI executable lookup — which (Unix) / where (Windows)
 const WHICH_CMD = process.platform === 'win32' ? 'where' : 'which';
@@ -144,23 +148,45 @@ function loadFromUserModels() {
   return [];
 }
 
+// 内置兜底模型列表（从 product.internal.json 提取，随代码发布）
+function loadFromBuiltin() {
+  try {
+    if (!fs.existsSync(BUILTIN_MODELS_PATH)) return null;
+    const content = JSON.parse(fs.readFileSync(BUILTIN_MODELS_PATH, 'utf8'));
+    const models = extractModels({ models: content });
+    if (models.length > 0) {
+      console.log(`  [models] Loaded ${models.length} models from builtin fallback`);
+      return models;
+    }
+  } catch (e) {
+    console.warn('  [models] Failed to load builtin models:', e.message);
+  }
+  return null;
+}
+
 // ─── 主函数：合并所有来源 ───────────────────────────────────────────────────
 export function loadModels() {
   console.log('  [models] Loading model list...');
 
-  // 优先级：local_storage 缓存 > product config > 空
+  // 优先级：local_storage 缓存 > product config > 内置兜底 > 空
   const cached = loadFromCache();
   const fromConfig = loadFromProductConfig();
+  const fromBuiltin = loadFromBuiltin();
   const customModels = loadFromUserModels();
 
-  // 以缓存为主，config 为补充
+  // 以第一个有数据的来源为主
   const modelMap = new Map();
-  const source = cached || fromConfig || [];
+  const source = cached || fromConfig || fromBuiltin || [];
   for (const m of source) modelMap.set(m.id, m);
 
-  // 补充另一个来源中缺少的模型
-  const supplement = cached ? fromConfig : null;
-  if (supplement) {
+  // 补充次要来源中缺少的模型（不覆盖主来源已有字段）
+  const supplements = cached
+    ? [fromConfig, fromBuiltin]
+    : fromConfig
+      ? [fromBuiltin]
+      : [];
+  for (const supplement of supplements) {
+    if (!supplement) continue;
     for (const m of supplement) {
       if (!modelMap.has(m.id)) modelMap.set(m.id, m);
     }
