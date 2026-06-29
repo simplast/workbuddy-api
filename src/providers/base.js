@@ -30,13 +30,23 @@ export class Provider {
    * @param {object}   [opts.modelMap]   - alias → real upstream model name
    * @param {string}   [opts.label]      - human-readable label for logs
    */
-  constructor({ name, protocol, baseURL, apiKey, models = [], modelMap = {}, label }) {
-    if (!['openai', 'anthropic'].includes(protocol)) {
-      throw new Error(`Provider "${name}" has invalid protocol "${protocol}" (expected 'openai' or 'anthropic')`);
+  constructor({
+    name,
+    protocol,
+    baseURL,
+    apiKey,
+    models = [],
+    modelMap = {},
+    label,
+  }) {
+    if (!["openai", "anthropic"].includes(protocol)) {
+      throw new Error(
+        `Provider "${name}" has invalid protocol "${protocol}" (expected 'openai' or 'anthropic')`,
+      );
     }
     this.name = name;
     this.protocol = protocol;
-    this.baseURL = baseURL.replace(/\/+$/, '');
+    this.baseURL = baseURL.replace(/\/+$/, "");
     this.apiKey = apiKey;
     this.models = models;
     this.modelMap = modelMap;
@@ -45,7 +55,7 @@ export class Provider {
 
   /** Override in subclasses to return a non-standard URL path. */
   resolveURL() {
-    return this.protocol === 'anthropic'
+    return this.protocol === "anthropic"
       ? `${this.baseURL}/v1/messages`
       : `${this.baseURL}/v1/chat/completions`;
   }
@@ -53,8 +63,8 @@ export class Provider {
   /** Default headers: Authorization + Content-Type. Override to add custom headers. */
   buildHeaders(/* body */) {
     return {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.apiKey}`,
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${this.apiKey}`,
     };
   }
 
@@ -84,22 +94,26 @@ export class Provider {
   postResponse(/* response */) {}
 
   /** Convenience: did this request succeed? */
-  onSuccess() { this.postResponse({ ok: true }); }
+  onSuccess() {
+    this.postResponse({ ok: true });
+  }
 
   /** Convenience: did we hit a rate limit? */
-  on429() { this.postResponse({ ok: false, status: 429 }); }
+  on429() {
+    this.postResponse({ ok: false, status: 429 });
+  }
 }
 
 /** OpenAI-protocol provider (default). */
 export class OpenAIProvider extends Provider {
   constructor(opts) {
-    super({ ...opts, protocol: 'openai' });
+    super({ ...opts, protocol: "openai" });
   }
 }
 
 /** Anthropic-protocol provider. */
 export class AnthropicProvider extends Provider {
   constructor(opts) {
-    super({ ...opts, protocol: 'anthropic' });
+    super({ ...opts, protocol: "anthropic" });
   }
 }

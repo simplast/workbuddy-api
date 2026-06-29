@@ -162,13 +162,22 @@ async function handleCodeBuddyRequest({
   };
 
   // CodeBuddy backend (Go) only accepts tool_choice as a plain string
-  // ("auto"/"none"/"required"/"tool-name"). Convert object-format values
-  // like { type: "function", function: { name: "xxx" } } → "xxx".
+  // ("auto"/"none"/"required"). Force "auto" for any non-string value.
   if (upstreamBody.tool_choice != null && typeof upstreamBody.tool_choice !== "string") {
-    if (upstreamBody.tool_choice?.type === "function" && upstreamBody.tool_choice?.function?.name) {
-      upstreamBody.tool_choice = upstreamBody.tool_choice.function.name;
-    } else {
-      delete upstreamBody.tool_choice;
+    upstreamBody.tool_choice = "auto";
+  }
+
+  // CodeBuddy's Go JSON Schema parser doesn't support `anyOf`, `const`,
+  // or `$schema` in tool function parameters. Strip these out.
+  // Also reject empty parameters objects — fill with a minimal schema.
+  if (upstreamBody.tools) {
+    for (const tool of upstreamBody.tools) {
+      if (tool?.function?.parameters) {
+        sanitizeSchema(tool.function.parameters);
+        if (!tool.function.parameters.properties && !tool.function.parameters.type) {
+          tool.function.parameters = { type: "object", properties: {} };
+        }
+      }
     }
   }
 
@@ -194,6 +203,20 @@ async function handleCodeBuddyRequest({
     !upstreamBody.reasoning
   ) {
     injectThinkingParams(upstreamBody);
+  }
+
+  // Intercept standalone web_search: call CodeBuddy's search API directly
+  // instead of routing to the LLM. Claude Code sends these as single-tool
+  // requests and expects real search results back.
+  const webSearchResult = await interceptWebSearch(upstreamBody);
+  if (webSearchResult) {
+    const model = upstreamBody.model;
+    return res.json(makeFakeChatCompletion({
+      id: "search-" + requestId,
+      model,
+      body: upstreamBody,
+      content: webSearchResult,
+    }));
   }
 
   dumpRequest("openai-codebuddy", requestId, upstreamBody);
@@ -539,4 +562,131 @@ function injectThinkingParams(body) {
       return;
     }
   }
+}
+
+// ─── Tool parameter schema sanitizer ────────────────────────────────────
+// CodeBuddy's Go JSON Schema parser rejects `anyOf`, `const` and `$schema`.
+// Strip them before sending to upstream.
+
+function sanitizeSchema(schema) {
+  if (!schema || typeof schema !== "object") return;
+
+  delete schema.$schema;
+
+  // Flatten anyOf with single entry: { anyOf: [{ type: "string", enum: [...] }, { ... }] }
+  // → pick the first entry and move its fields up.
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    const first = schema.anyOf[0];
+    delete schema.anyOf;
+    for (const key of Object.keys(first)) {
+      if (schema[key] == null) schema[key] = first[key];
+    }
+  }
+
+  // Delete const (not supported)
+  delete schema.const;
+
+  // Recurse into properties
+  if (schema.properties) {
+    for (const v of Object.values(schema.properties)) sanitizeSchema(v);
+  }
+
+  // Recurse into items (arrays)
+  if (schema.items) sanitizeSchema(schema.items);
+
+  // Recurse into additionalProperties
+  if (schema.additionalProperties && typeof schema.additionalProperties === "object") {
+    sanitizeSchema(schema.additionalProperties);
+  }
+}
+
+// ─── WebSearch interception ─────────────────────────────────────────────
+// When Claude Code sends a standalone web_search request (single tool,
+// user message starts with "Perform a web search"), intercept it and
+// call CodeBuddy's search API directly instead of routing to the LLM.
+
+const WEB_SEARCH_API_PATH = "/agenttool/v1/search";
+const WEB_SEARCH_RE = /^Perform a web search for the query:\s*(.+?)\s*$/ms;
+
+async function interceptWebSearch(body) {
+  if (!body.tools || body.tools.length !== 1) return null;
+  if (body.tools[0].function?.name !== "web_search") return null;
+
+  const msgs = body.messages;
+  if (!msgs || msgs.length === 0) return null;
+
+  // Last user message should be the search instruction
+  const lastUser = msgs.filter(m => m.role === "user").pop();
+  if (!lastUser?.content || typeof lastUser.content !== "string") return null;
+
+  const m = lastUser.content.match(WEB_SEARCH_RE);
+  if (!m) return null;
+
+  const query = m[1].trim();
+  return doWebSearch(query);
+}
+
+async function doWebSearch(query) {
+  try {
+    const resp = await fetch(
+      `${process.env.CODEBUDDY_BASE_URL || "https://copilot.tencent.com"}${WEB_SEARCH_API_PATH}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.CODEBUDDY_API_KEY}`,
+          "X-User-Id": `anonymous_${(process.env.CODEBUDDY_API_KEY || "").slice(-8)}`,
+          "X-IDE-Type": "CLI",
+          "X-Product": "SaaS",
+          "Accept": "application/json",
+        },
+        body: JSON.stringify({ query }),
+      },
+    );
+
+    if (!resp.ok) {
+      console.error(`[websearch] API returned ${resp.status}`);
+      return null;
+    }
+
+    const data = await resp.json();
+    if (!data?.results || data.results.length === 0) return null;
+
+    // Format results as text
+    const lines = [`Web search results for query: "${query}"`, ""];
+    data.results.forEach((r, i) => {
+      lines.push(`${i + 1}. **${r.title}**`);
+      if (r.snippet) lines.push(`   ${r.snippet}`);
+      if (r.url) lines.push(`   URL: ${r.url}`);
+      lines.push("");
+    });
+    return lines.join("\n");
+  } catch (e) {
+    console.error("[websearch] Error:", e.message);
+    return null;
+  }
+}
+
+// Build a synthetic non-streaming chat completion response (used when
+// we intercept a request and return results without calling upstream).
+function makeFakeChatCompletion({ id, model, body, content }) {
+  const tokenCount = Math.ceil((content || "").length / 3);
+  return {
+    id: id || "intercepted-" + Date.now(),
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: model || body?.model || "unknown",
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: content || "" },
+        finish_reason: "stop",
+      },
+    ],
+    usage: {
+      prompt_tokens: 0,
+      completion_tokens: tokenCount,
+      total_tokens: tokenCount,
+    },
+  };
 }
