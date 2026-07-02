@@ -8,6 +8,9 @@ const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 
 if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
 
+// 程序运行以来累计金额
+let totalCredit = 0;
+
 function rotateIfNeeded() {
   try {
     const stat = fs.statSync(LOG_FILE);
@@ -41,7 +44,12 @@ export function logRequest({ model, startTime, usage }) {
     if (cacheHit) parts.push(`\x1b[35mΔ${fmtNum(cacheHit)}\x1b[0m`);
     if (cacheMiss) parts.push(`M${fmtNum(cacheMiss)}`);
     if (thinking) parts.push(`\x1b[90mT${fmtNum(thinking)}\x1b[0m`);
-    if (credit != null) parts.push(`\x1b[31m¥${credit}\x1b[0m`);
+    if (credit != null) {
+      const creditNum = Number(credit);
+      if (!Number.isNaN(creditNum)) totalCredit += creditNum;
+      parts.push(`\x1b[31m¥${credit}\x1b[0m`);
+      parts.push(`\x1b[1;31mΣ¥${totalCredit.toFixed(2)}\x1b[0m`);
+    }
 
     const record = {
       timestamp: now.toISOString(),
