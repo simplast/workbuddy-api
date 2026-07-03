@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { logDiag } from "./logger.js";
 
 /**
  * Path to the optional system prompt override file.
@@ -59,9 +60,7 @@ export function filterContentMessages(messages) {
     }
   }
   if (cleaned > 0) {
-    console.log(
-      `\x1b[36m[clean]\x1b[0m scrubbed ${cleaned} content_filter marker(s) from assistant messages`,
-    );
+    logDiag('[clean]', `scrubbed ${cleaned} content_filter marker(s) from assistant messages`);
   }
   return messages;
 }

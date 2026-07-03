@@ -1,3 +1,5 @@
+import { logDiag } from './logger.js';
+
 /**
  * Normalize OpenAI Chat Completions messages for upstream compatibility.
  *
@@ -64,7 +66,7 @@ export function normalizeOpenAIMessages(messages) {
     const parts = [];
     if (fixed > 0) parts.push(`${fixed} assistant message(s) with array content → string`);
     if (argsFixed > 0) parts.push(`${argsFixed} tool_calls arguments object → string`);
-    console.log(`\x1b[36m[normalize]\x1b[0m ${parts.join(', ')}`);
+    logDiag('[normalize]', parts.join(', '));
   }
 
   return messages;

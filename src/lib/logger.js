@@ -20,15 +20,29 @@ function rotateIfNeeded() {
   } catch { /* file may not exist yet */ }
 }
 
+function ts(now = new Date()) {
+  return now.toLocaleTimeString('zh-CN', { hour12: false }) + '.' + String(now.getMilliseconds()).padStart(3, '0');
+}
+
+/**
+ * Print a diagnostic line with a gray timestamp prefix so ad-hoc logs
+ * ([normalize], [clean], [rate-limit], ...) align with logRequest lines.
+ */
+export function logDiag(tag, message, color = 36) {
+  console.log(`\x1b[90m${ts()}\x1b[0m \x1b[${color}m${tag}\x1b[0m ${message}`);
+}
+
 export function logRequest({ model, startTime, usage }) {
   const now = new Date();
-  const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false }) + '.' + String(now.getMilliseconds()).padStart(3, '0');
   const elapsed = Date.now() - startTime;
 
+  // Each part is padded to a fixed visible width so columns line up across
+  // consecutive log lines. Color codes wrap the already-padded string, so
+  // padEnd sees only the visible text (no ANSI counted).
   const parts = [
-    `\x1b[90m${timeStr}\x1b[0m`,
-    `\x1b[1m${model}\x1b[0m`,
-    `\x1b[90m${elapsed}ms\x1b[0m`,
+    `\x1b[90m${ts(now)}\x1b[0m`,
+    `\x1b[1m${model.padEnd(8)}\x1b[0m`,
+    `\x1b[90m${`${elapsed}ms`.padEnd(7)}\x1b[0m`,
   ];
 
   if (usage) {
@@ -39,16 +53,18 @@ export function logRequest({ model, startTime, usage }) {
     const thinking = usage.completion_thinking_tokens ?? usage.completion_tokens_details?.reasoning_tokens ?? 0;
     const credit = usage.credit;
 
-    parts.push(`\x1b[32m↑${fmtNum(inp)}\x1b[0m`);
-    parts.push(`\x1b[33m↓${fmtNum(out)}\x1b[0m`);
-    if (cacheHit) parts.push(`\x1b[35mΔ${fmtNum(cacheHit)}\x1b[0m`);
-    if (cacheMiss) parts.push(`M${fmtNum(cacheMiss)}`);
-    if (thinking) parts.push(`\x1b[90mT${fmtNum(thinking)}\x1b[0m`);
+    parts.push(`\x1b[32m${`↑${fmtNum(inp)}`.padEnd(6)}\x1b[0m`);
+    parts.push(`\x1b[33m${`↓${fmtNum(out)}`.padEnd(5)}\x1b[0m`);
+    // Reserve the Δ slot whenever cache info is present, so later columns
+    // don't shift left on lines that had no cache-hit.
+    if (cacheHit || cacheMiss) parts.push(`\x1b[35m${`Δ${fmtNum(cacheHit)}`.padEnd(6)}\x1b[0m`);
+    if (cacheMiss) parts.push(`\x1b[0m${`M${fmtNum(cacheMiss)}`.padEnd(6)}\x1b[0m`);
+    if (thinking) parts.push(`\x1b[90m${`T${fmtNum(thinking)}`.padEnd(5)}\x1b[0m`);
     if (credit != null) {
       const creditNum = Number(credit);
       if (!Number.isNaN(creditNum)) totalCredit += creditNum;
-      parts.push(`\x1b[31m¥${credit}\x1b[0m`);
-      parts.push(`\x1b[1;31mΣ¥${totalCredit.toFixed(2)}\x1b[0m`);
+      parts.push(`\x1b[31m${`¥${credit}`.padEnd(6)}\x1b[0m`);
+      parts.push(`\x1b[1;31m${`Σ¥${totalCredit.toFixed(2)}`.padEnd(7)}\x1b[0m`);
     }
 
     const record = {
@@ -72,7 +88,7 @@ export function logRequest({ model, startTime, usage }) {
     }
   }
 
-  console.log(parts.join('  '));
+  console.log(parts.join(' '));
 }
 
 function fmtNum(n) {

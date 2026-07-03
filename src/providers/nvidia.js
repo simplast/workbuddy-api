@@ -6,6 +6,7 @@
  * exponential backoff on 429 responses.
  */
 import { OpenAIProvider } from './base.js';
+import { logDiag } from '../lib/logger.js';
 
 const DEFAULT_RPM = 40;
 const DEFAULT_BURST = 5;
@@ -44,7 +45,7 @@ class RateLimiter {
     const now = Date.now();
     if (this.backoffUntil > now) {
       const waitTime = this.backoffUntil - now;
-      console.log(`\x1b[33m[rate-limit]\x1b[0m Waiting ${Math.round(waitTime / 1000)}s due to previous 429...`);
+      logDiag('[rate-limit]', `Waiting ${Math.round(waitTime / 1000)}s due to previous 429...`, 33);
       await new Promise((resolve) => setTimeout(resolve, waitTime));
     }
     return new Promise((resolve) => {
@@ -69,7 +70,7 @@ class RateLimiter {
       MAX_BACKOFF_MS,
     );
     this.backoffUntil = Date.now() + backoffMs;
-    console.log(`\x1b[31m[rate-limit]\x1b[0m 429 received! Cooling down for ${Math.round(backoffMs / 60_000)} minutes (count=${this.consecutive429Count})`);
+    logDiag('[rate-limit]', `429 received! Cooling down for ${Math.round(backoffMs / 60_000)} minutes (count=${this.consecutive429Count})`, 31);
   }
 
   onSuccess() {
