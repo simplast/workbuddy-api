@@ -87,6 +87,11 @@ export const config = {
   port: parseInt(process.env.PORT || "3456", 10),
   host: process.env.HOST || "127.0.0.1",
 
+  // HTTPS configuration
+  httpsEnabled: process.env.HTTPS_ENABLED === "1",
+  httpsKeyPath: process.env.HTTPS_KEY_PATH || "certs/localhost.key",
+  httpsCertPath: process.env.HTTPS_CERT_PATH || "certs/localhost.crt",
+
   // Backward-compatible fields (used by routes/index before the registry is consulted)
   defaultModel: process.env.DEFAULT_MODEL || "default",
   apiKey: process.env.CODEBUDDY_API_KEY || process.env.NVIDIA_API_KEY || "",
