@@ -89,6 +89,7 @@ export const config = {
 
   // HTTPS configuration
   httpsEnabled: process.env.HTTPS_ENABLED === "1",
+  httpsPort: parseInt(process.env.HTTPS_PORT || "3457", 10),
   httpsKeyPath: process.env.HTTPS_KEY_PATH || "certs/localhost.key",
   httpsCertPath: process.env.HTTPS_CERT_PATH || "certs/localhost.crt",
 

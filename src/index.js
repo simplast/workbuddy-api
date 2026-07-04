@@ -78,42 +78,37 @@ function startServer() {
     .map((p) => p.name)
     .join(", ");
 
-  if (config.httpsEnabled) {
-    try {
-      const privateKey = fs.readFileSync(config.httpsKeyPath, "utf8");
-      const certificate = fs.readFileSync(config.httpsCertPath, "utf8");
-      const credentials = { key: privateKey, cert: certificate };
-      https.createServer(credentials, app).listen(config.port, config.host, () => {
-        console.log(`
-  ✦ workbuddy-api proxy running (HTTPS)
+  http.createServer(app).listen(config.port, config.host, () => {
+    console.log(`
+  ✦ workbuddy-api proxy running
 
-  OpenAI:    https://${config.host}:${config.port}/v1/chat/completions
-  Anthropic: https://${config.host}:${config.port}/v1/messages
-  Providers: ${providers} (default: ${config.providers.defaultProviderName})
-  Default:   ${config.defaultModel}
-  `);
-      });
-    } catch (err) {
-      console.error(`
+  OpenAI:    http://${config.host}:${config.port}/v1/chat/completions
+  Anthropic: http://${config.host}:${config.port}/v1/messages`);
+
+    if (config.httpsEnabled) {
+      try {
+        const privateKey = fs.readFileSync(config.httpsKeyPath, "utf8");
+        const certificate = fs.readFileSync(config.httpsCertPath, "utf8");
+        const credentials = { key: privateKey, cert: certificate };
+        https.createServer(credentials, app).listen(config.httpsPort, config.host, () => {
+          console.log(`
+  HTTPS:     https://${config.host}:${config.httpsPort}/v1/chat/completions`);
+        });
+      } catch (err) {
+        console.error(`
   ✗ Failed to start HTTPS server: ${err.message}
   Check that ${config.httpsKeyPath} and ${config.httpsCertPath} exist.
   You can generate self-signed certificates with:
     node scripts/gen-cert.js
   `);
-      process.exit(1);
+      }
     }
-  } else {
-    http.createServer(app).listen(config.port, config.host, () => {
-      console.log(`
-  ✦ workbuddy-api proxy running
 
-  OpenAI:    http://${config.host}:${config.port}/v1/chat/completions
-  Anthropic: http://${config.host}:${config.port}/v1/messages
+    console.log(`
   Providers: ${providers} (default: ${config.providers.defaultProviderName})
   Default:   ${config.defaultModel}
   `);
-    });
-  }
+  });
 }
 
 startServer();
