@@ -6,3 +6,5 @@ certs/
 .DS_Store
 system-prompt.txt
 codebuddy-system-prompt.txt
+feishu-auth-qr.png
+skills-lock.json
