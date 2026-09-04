@@ -21,7 +21,7 @@ function rotateIfNeeded() {
 }
 
 function ts(now = new Date()) {
-  return now.toLocaleTimeString('zh-CN', { hour12: false }) + '.' + String(now.getMilliseconds()).padStart(3, '0');
+  return now.toLocaleTimeString('zh-CN', { hour12: false });
 }
 
 /**
@@ -42,7 +42,7 @@ export function logRequest({ model, startTime, usage }) {
   const parts = [
     `\x1b[90m${ts(now)}\x1b[0m`,
     `\x1b[1m${model.padEnd(8)}\x1b[0m`,
-    `\x1b[90m${`${elapsed}ms`.padEnd(7)}\x1b[0m`,
+    `\x1b[90m${`${(elapsed / 1000).toFixed(1)}s`.padEnd(6)}\x1b[0m`,
   ];
 
   if (usage) {
@@ -59,7 +59,9 @@ export function logRequest({ model, startTime, usage }) {
     // don't shift left on lines that had no cache-hit.
     if (cacheHit || cacheMiss) parts.push(`\x1b[35m${`Δ${fmtNum(cacheHit)}`.padEnd(6)}\x1b[0m`);
     if (cacheMiss) parts.push(`\x1b[0m${`M${fmtNum(cacheMiss)}`.padEnd(6)}\x1b[0m`);
-    if (thinking) parts.push(`\x1b[90m${`T${fmtNum(thinking)}`.padEnd(5)}\x1b[0m`);
+    // T slot is emitted unconditionally (T0 when zero) — skipping it on
+    // lines without thinking would shift the ¥/Σ¥ columns left.
+    parts.push(`\x1b[90m${`T${fmtNum(thinking)}`.padEnd(5)}\x1b[0m`);
     if (credit != null) {
       const creditNum = Number(credit);
       if (!Number.isNaN(creditNum)) totalCredit += creditNum;

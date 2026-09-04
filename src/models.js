@@ -166,8 +166,6 @@ function loadFromBuiltin() {
 
 // ─── 主函数：合并所有来源 ───────────────────────────────────────────────────
 export function loadModels() {
-  console.log('  [models] Loading model list...');
-
   // 优先级：local_storage 缓存 > product config > 内置兜底 > 空
   const cached = loadFromCache();
   const fromConfig = loadFromProductConfig();
