@@ -1,6 +1,5 @@
 /**
- * SSE stream parsing utilities.
- * Used by both OpenAI and Anthropic route handlers.
+ * SSE stream parsing/aggregation utilities for the CodeBuddy chain.
  */
 
 /**
@@ -101,14 +100,6 @@ export async function readSSEStream(
   } finally {
     clearInterval(watchdog);
   }
-}
-
-/**
- * Format an Anthropic SSE event string.
- * Used by the Anthropic streaming response handler.
- */
-export function sseEvent(event, obj) {
-  return `event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`;
 }
 
 /**

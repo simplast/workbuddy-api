@@ -1,17 +1,11 @@
 /**
  * Provider base class.
  *
- * All upstream providers speak one of two wire protocols:
- *   - 'openai'    — POST /chat/completions (OpenAI Chat Completions API)
- *   - 'anthropic' — POST /messages (Anthropic Messages API)
+ * All upstream traffic goes to CodeBuddy over the OpenAI Chat Completions
+ * protocol. Subclasses override the public hooks to add provider-specific
+ * behavior (custom headers, field rewrites, rate-limit hooks).
  *
- * "Private" providers (e.g. CodeBuddy, NVIDIA) are patches on top of one of
- * these protocols — they add custom headers, field rewrites, or rate-limit
- * hooks, but never invent a third wire format. Add a new private provider
- * by extending `OpenAIProvider` or `AnthropicProvider` and overriding the
- * relevant hooks.
- *
- * Public hooks (override in subclasses to add provider-specific behavior):
+ * Public hooks (override in subclasses):
  *   - resolveURL()              → returns the full upstream URL
  *   - buildHeaders(body)        → returns the headers object for the request
  *   - preRequest(body)          → mutate request body before sending (sync)
@@ -23,7 +17,6 @@ export class Provider {
   /**
    * @param {object} opts
    * @param {string} opts.name           - unique provider name (used for logging)
-   * @param {'openai'|'anthropic'} opts.protocol
    * @param {string} opts.baseURL
    * @param {string} opts.apiKey
    * @param {string[]} [opts.models]     - aliases that route to this provider
@@ -32,20 +25,13 @@ export class Provider {
    */
   constructor({
     name,
-    protocol,
     baseURL,
     apiKey,
     models = [],
     modelMap = {},
     label,
   }) {
-    if (!["openai", "anthropic"].includes(protocol)) {
-      throw new Error(
-        `Provider "${name}" has invalid protocol "${protocol}" (expected 'openai' or 'anthropic')`,
-      );
-    }
     this.name = name;
-    this.protocol = protocol;
     this.baseURL = baseURL.replace(/\/+$/, "");
     this.apiKey = apiKey;
     this.models = models;
@@ -55,9 +41,7 @@ export class Provider {
 
   /** Override in subclasses to return a non-standard URL path. */
   resolveURL() {
-    return this.protocol === "anthropic"
-      ? `${this.baseURL}/v1/messages`
-      : `${this.baseURL}/v1/chat/completions`;
+    return `${this.baseURL}/v1/chat/completions`;
   }
 
   /** Default headers: Authorization + Content-Type. Override to add custom headers. */
@@ -105,15 +89,4 @@ export class Provider {
 }
 
 /** OpenAI-protocol provider (default). */
-export class OpenAIProvider extends Provider {
-  constructor(opts) {
-    super({ ...opts, protocol: "openai" });
-  }
-}
-
-/** Anthropic-protocol provider. */
-export class AnthropicProvider extends Provider {
-  constructor(opts) {
-    super({ ...opts, protocol: "anthropic" });
-  }
-}
+export class OpenAIProvider extends Provider {}

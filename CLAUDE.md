@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-CodeBuddy 本地 API 代理服务。将 Vercel AI SDK / 任意 OpenAI 兼容客户端连接到 CodeBuddy 后端，同时支持 Anthropic Messages API 格式。
+CodeBuddy 本地 API 代理服务。将 Vercel AI SDK / 任意 OpenAI 兼容客户端连接到 CodeBuddy 后端。
 
 ## 技术栈
 
@@ -18,11 +18,9 @@ src/
 ├── index.js              # Express 路由注册
 ├── config.js             # 环境变量配置
 ├── routes/
-│   ├── openai.js         # POST /v1/chat/completions
-│   └── anthropic.js      # POST /v1/messages
+│   └── openai.js         # POST /v1/chat/completions
 ├── lib/                  # 工具：upstream, logger, normalize, prompt, sse, debug
-├── providers/            # 上游 provider：base, codebuddy, nvidia, registry
-└── convert/              # 格式转换：anthropic, anthropic-response
+└── providers/            # 上游 provider：base, codebuddy, registry
 ```
 
 ## 启动命令
@@ -37,39 +35,30 @@ npm start      # 生产
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/v1/chat/completions` | OpenAI 兼容，支持 stream |
-| POST | `/v1/messages` | Anthropic Messages API |
 | GET  | `/v1/models` | 模型列表 |
 | GET  | `/health` | 健康检查 |
 
 ## 环境变量
 
-至少需要配置一个 provider 的 API Key（`CODEBUDDY_API_KEY` 或 `NVIDIA_API_KEY`），否则服务启动时会报错退出。
+必须配置 `CODEBUDDY_API_KEY`，否则服务启动时会报错退出。
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `CODEBUDDY_API_KEY` | 至少一个 | CodeBuddy API Key（启用 CodeBuddy provider） |
-| `NVIDIA_API_KEY` | 至少一个 | NVIDIA API Key（启用 NVIDIA provider） |
+| `CODEBUDDY_API_KEY` | 是 | CodeBuddy API Key |
 | `CODEBUDDY_BASE_URL` | 否 | 默认 `https://www.codebuddy.ai` |
 | `CODEBUDDY_MODELS` | 否 | 逗号分隔的模型别名，默认 `default-model` |
 | `CODEBUDDY_TARGET_MODEL` | 否 | 实际上游模型名（别名未设映射时默认原样传递） |
-| `NVIDIA_BASE_URL` | 否 | 默认 `https://integrate.api.nvidia.com/v1` |
-| `NVIDIA_MODELS` | 否 | 逗号分隔的模型别名 |
-| `NVIDIA_TARGET_MODEL` | 否 | 实际上游模型名，默认 `z-ai/glm-5.1` |
-| `NVIDIA_RPM` | 否 | 每分钟请求限制，默认 `40` |
-| `NVIDIA_BURST` | 否 | 令牌桶突发容量，默认 `5` |
-| `DEFAULT_PROVIDER` | 否 | 未命中模型时的回退 provider，默认优先 codebuddy |
 | `DEFAULT_MODEL` | 否 | 默认模型 |
 | `PORT` | 否 | 默认 3456 |
 | `HOST` | 否 | 默认 127.0.0.1 |
 
 ## Provider 架构
 
-两条基准协议路线：`openai` 和 `anthropic`。私有 provider（CodeBuddy、NVIDIA）是"补丁"——在协议之上叠加自定义头、模型别名、限流。
+唯一上游为 CodeBuddy（OpenAI 协议）——`provider` 基类 + CLI 指纹头（`buildCliHeaders()`）叠加在标准请求之上。
 
-**新增私有 provider：**
-1. 创建 `src/providers/<name>.js` 子类，继承 `OpenAIProvider` 或 `AnthropicProvider`
-2. 覆盖钩子：`buildHeaders()` / `preRequest()` / `preRequestAsync()` / `on429()`
-3. 在 `src/config.js` 中按 `process.env.<NAME>_API_KEY` 条件实例化
+**CodeBuddy provider 要点：**
+1. `src/providers/codebuddy.js` 继承 `OpenAIProvider`，重写 `resolveURL()`（/v2 路径）与 `buildHeaders()`（CLI 指纹头）
+2. 在 `src/config.js` 中按 `CODEBUDDY_API_KEY` 条件实例化
 
 ## 使用示例
 
@@ -87,8 +76,8 @@ const result = await local.chat('default-model-lite').generate('Hello');
 ## 更多文档
 
 - [docs/codebuddy-thinking-analysis.md](docs/codebuddy-thinking-analysis.md) — CodeBuddy thinking/reasoning 机制逆向分析（`reasoning_effort` vs `thinking` 参数格式）
-- [docs/design-decisions.md](docs/design-decisions.md) — 关键设计决策（SSE 清洗、Anthropic 转换等）
-- [docs/request-paths.md](docs/request-paths.md) — 3 条请求链路详解
-- [docs/provider-guide.md](docs/provider-guide.md) — Provider 架构详解与新增指南
+- [docs/design-decisions.md](docs/design-decisions.md) — 关键设计决策（SSE 清洗、prompt 替换等）
+- [docs/request-paths.md](docs/request-paths.md) — 请求链路详解
+- [docs/provider-guide.md](docs/provider-guide.md) — Provider 架构详解
 
 *（内容由AI生成，仅供参考）*

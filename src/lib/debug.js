@@ -28,7 +28,7 @@ export function makeRequestId() {
 
 /**
  * Dump the upstream request body to debug files and console.
- * @param {string} prefix - 'openai' or 'anthropic'
+ * @param {string} prefix - log prefix (e.g. 'openai-codebuddy')
  * @param {string} requestId
  * @param {object} upstreamBody
  */
@@ -51,11 +51,8 @@ export function dumpRequest(prefix, requestId, upstreamBody) {
     );
     fs.writeFileSync(path.join(DEBUG_DIR, filename), content);
 
-    // Write last-request file (separate for openai vs anthropic)
-    const lastFile =
-      prefix === "anthropic"
-        ? "last-request-anthropic.json"
-        : "last-request.json";
+    // Write last-request file
+    const lastFile = "last-request.json";
     fs.writeFileSync(path.join(LOG_DIR, lastFile), content);
 
     // Console summary
@@ -78,7 +75,7 @@ export function dumpRequest(prefix, requestId, upstreamBody) {
     if (upstreamBody.reasoning_effort != null) {
       thinkingInfo.push(`reasoning_effort=${upstreamBody.reasoning_effort}`);
     }
-    // Anthropic: thinking budget_tokens or enabled
+    // Clients may still pass a thinking param (e.g. budget_tokens / enabled)
     if (upstreamBody.thinking != null) {
       const t = upstreamBody.thinking;
       if (typeof t === "object") {
@@ -110,7 +107,7 @@ export function dumpRequest(prefix, requestId, upstreamBody) {
 
 /**
  * Dump the aggregated response to debug files and console.
- * @param {string} prefix - 'openai' or 'anthropic'
+ * @param {string} prefix - log prefix
  * @param {string} requestId
  * @param {object} debugResp - Aggregated response summary object
  */
@@ -126,10 +123,7 @@ export function dumpResponse(prefix, requestId, debugResp) {
     );
     fs.writeFileSync(path.join(DEBUG_DIR, filename), content);
 
-    const lastFile =
-      prefix === "anthropic"
-        ? "last-response-anthropic.json"
-        : "last-response.json";
+    const lastFile = "last-response.json";
     fs.writeFileSync(path.join(LOG_DIR, lastFile), content);
   } catch {
     /* ignore */

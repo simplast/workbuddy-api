@@ -1,5 +1,5 @@
 import { config } from "../config.js";
-import { fetchUpstream, providerFor } from "../lib/upstream.js";
+import { fetchUpstream } from "../lib/upstream.js";
 import { logRequest } from "../lib/logger.js";
 import { replaceSystemPrompt, filterContentMessages } from "../lib/prompt.js";
 import { normalizeOpenAIMessages } from "../lib/normalize.js";
@@ -19,131 +19,27 @@ import {
 /**
  * POST /v1/chat/completions — OpenAI-compatible endpoint
  *
- * Two paths:
- *   - CodeBuddy upstream: full adaptations (prompt replacement, CLI headers,
- *     SSE field normalization, forced-stream aggregation for non-stream clients)
- *   - Other providers: pure passthrough — request body and upstream bytes
- *     are forwarded unchanged, except for model-name alias resolution.
+ * Sole upstream is CodeBuddy: prompt replacement, CLI headers, SSE field
+ * normalization, and forced-stream aggregation for non-stream clients.
  */
 export async function handleChatCompletions(req, res) {
   const startTime = Date.now();
   const reqModel = req.body.model || config.defaultModel;
-  const provider = providerFor(reqModel);
-  const isCodeBuddy = provider.name === "codebuddy";
   const wantStream = req.body.stream === true;
 
   const requestId = makeRequestId();
 
-  if (isCodeBuddy) {
-    return handleCodeBuddyRequest({
-      req,
-      res,
-      reqModel,
-      wantStream,
-      startTime,
-      requestId,
-    });
-  } else {
-    return handlePassthroughRequest({
-      req,
-      res,
-      reqModel,
-      wantStream,
-      startTime,
-      requestId,
-    });
-  }
-}
-
-// ─── Path A: non-CodeBuddy providers — pure passthrough ────────────────
-async function handlePassthroughRequest({
-  req,
-  res,
-  reqModel,
-  wantStream,
-  startTime,
-  requestId,
-}) {
-  // Forward the original body; model-name alias resolution is handled by
-  // fetchUpstream → provider.preRequest() which maps the model but preserves
-  // everything else (stream flag, messages, tools, temperature, etc.)
-  const body = { ...req.body };
-  if (!body.model) body.model = reqModel;
-
-  // Debug dump — log what is actually being sent upstream
-  dumpRequest("openai-passthrough", requestId, body);
-
-  let upstream;
-  try {
-    upstream = await fetchUpstream(body);
-  } catch (err) {
-    console.error("[proxy error]", err?.message || err);
-    return res.status(500).json({
-      error: {
-        message: err?.message || "Internal proxy error",
-        type: "proxy_error",
-      },
-    });
-  }
-
-  if (!upstream.ok) {
-    const errText = await upstream.text();
-    console.error(`[upstream ${upstream.status}]`, errText);
-    return res
-      .status(upstream.status)
-      .setHeader("content-type", "application/json")
-      .send(JSON.stringify({ error: { message: `Upstream error (${upstream.status})`, type: "upstream_error" } }));
-  }
-
-  // Forward response headers for streaming vs non-streaming
-  if (wantStream) {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-  } else {
-    res.setHeader("Content-Type", "application/json");
-  }
-
-  // Propagate client disconnect upstream
-  res.on("close", () => {
-    if (res.writableEnded) return;
-    try {
-      upstream.body.cancel?.();
-    } catch {}
+  return handleCodeBuddyRequest({
+    req,
+    res,
+    reqModel,
+    wantStream,
+    startTime,
+    requestId,
   });
-
-  // Pipe raw bytes from upstream to client
-  try {
-    const reader = upstream.body.getReader();
-    const TIMEOUT = 120_000;
-    let lastDataTime = Date.now();
-    const watchdog = setInterval(() => {
-      if (Date.now() - lastDataTime > TIMEOUT) {
-        console.error("[stream timeout] passthrough no data");
-        try {
-          reader.cancel();
-        } catch {}
-        clearInterval(watchdog);
-      }
-    }, 10_000);
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      lastDataTime = Date.now();
-      res.write(value);
-    }
-    clearInterval(watchdog);
-  } catch (e) {
-    console.error("[passthrough pipe error]", e.message);
-  }
-
-  res.end();
-  logRequest({ model: reqModel, startTime });
 }
 
-// ─── Path B: CodeBuddy upstream — full adaptation stack ────────────────
+// ─── CodeBuddy upstream — full adaptation stack ────────────────────────
 async function handleCodeBuddyRequest({
   req,
   res,
@@ -259,7 +155,7 @@ async function handleCodeBuddyRequest({
   }
 }
 
-// ─── CodeBuddy streaming: SSE parsing + field normalization + passthrough
+// ─── CodeBuddy streaming: SSE parsing + field normalization + pipe to client
 async function pipeCodeBuddyStream({
   res,
   upstream,

@@ -1,20 +1,17 @@
 import "dotenv/config";
 import { CodeBuddyProvider } from "./providers/codebuddy.js";
-import { NvidiaProvider } from "./providers/nvidia.js";
 import { ProviderRegistry } from "./providers/registry.js";
 
 /**
- * Multi-provider configuration.
+ * CodeBuddy-only configuration.
  *
- * The two base protocols are 'openai' and 'anthropic'. CodeBuddy and NVIDIA
- * are private providers that sit on top of one of these protocols — they
- * only add custom headers, model name aliases, and rate limiting. New
- * private providers should be added as subclasses of OpenAIProvider or
- * AnthropicProvider in src/providers/.
+ * CodeBuddy is the sole upstream — an OpenAI-protocol provider with CLI
+ * request-header fingerprinting and prompt replacement. The registry is
+ * retained so model aliases still resolve through the same dispatch layer.
  */
 const providers = [];
 
-// ─── codebuddy (default OpenAI protocol provider) ─────────────────────
+// ─── codebuddy (only provider) ────────────────────────────────────────
 if (process.env.CODEBUDDY_API_KEY) {
   const aliases = (
     process.env.CODEBUDDY_MODELS ||
@@ -38,44 +35,16 @@ if (process.env.CODEBUDDY_API_KEY) {
   );
 }
 
-// ─── nvidia (OpenAI protocol, with rate limiting) ─────────────────────
-if (process.env.NVIDIA_API_KEY) {
-  const aliases = (process.env.NVIDIA_MODELS || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const modelMap = Object.fromEntries(
-    aliases.map((a) => [
-      a,
-      a.includes("/") ? a : process.env.NVIDIA_TARGET_MODEL || "z-ai/glm-5.1",
-    ]),
-  );
-  providers.push(
-    new NvidiaProvider({
-      name: "nvidia",
-      baseURL:
-        process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1",
-      apiKey: process.env.NVIDIA_API_KEY,
-      models: aliases,
-      modelMap,
-      rpm: parseInt(process.env.NVIDIA_RPM || "40", 10),
-      burst: parseInt(process.env.NVIDIA_BURST || "5", 10),
-    }),
-  );
-}
-
 if (providers.length === 0) {
   console.error(
     "\n  ⚠  No provider configured!\n" +
-      "  Please set CODEBUDDY_API_KEY or NVIDIA_API_KEY in .env, or pass via environment.\n" +
-      "  See .env.example for the full list of supported providers.\n",
+      "  Please set CODEBUDDY_API_KEY in .env, or pass via environment.\n" +
+      "  See .env.example for the full list of supported env vars.\n",
   );
   process.exit(1);
 }
 
-const defaultProviderName =
-  process.env.DEFAULT_PROVIDER ||
-  (process.env.CODEBUDDY_API_KEY ? "codebuddy" : providers[0].name);
+const defaultProviderName = "codebuddy";
 
 export const providerRegistry = new ProviderRegistry(
   providers,
@@ -93,9 +62,9 @@ export const config = {
   httpsKeyPath: process.env.HTTPS_KEY_PATH || "certs/localhost.key",
   httpsCertPath: process.env.HTTPS_CERT_PATH || "certs/localhost.crt",
 
-  // Backward-compatible fields (used by routes/index before the registry is consulted)
+  // Defaults used when the request omits a model
   defaultModel: process.env.DEFAULT_MODEL || "default",
-  apiKey: process.env.CODEBUDDY_API_KEY || process.env.NVIDIA_API_KEY || "",
+  apiKey: process.env.CODEBUDDY_API_KEY || "",
   baseURL: providers[0]?.baseURL || "https://www.codebuddy.ai",
 
   // Provider registry — the source of truth for upstream routing

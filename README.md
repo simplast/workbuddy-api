@@ -2,7 +2,7 @@
 
 [中文文档](./README.zh-CN.md)
 
-Local proxy that connects OpenAI-compatible clients (Vercel AI SDK, any `POST /v1/chat/completions` client) to CodeBuddy and other AI providers. Also supports the Anthropic Messages API format.
+Local proxy that connects OpenAI-compatible clients (Vercel AI SDK, any `POST /v1/chat/completions` client) to CodeBuddy.
 
 ## Quick Start
 
@@ -10,7 +10,7 @@ Requires Node.js ≥ 18.
 
 ```bash
 npm install
-cp .env.example .env   # edit .env to add your API key(s)
+cp .env.example .env   # edit .env to add your CODEBUDDY_API_KEY
 npm run dev            # http://127.0.0.1:3456
 ```
 
@@ -19,7 +19,6 @@ npm run dev            # http://127.0.0.1:3456
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions API |
-| `POST` | `/v1/messages` | Anthropic Messages API |
 | `GET` | `/v1/models` | Model list (from CodeBuddy CLI cache) |
 | `GET` | `/health` | Health check |
 
@@ -36,35 +35,25 @@ const local = createOpenAI({
 const result = await local.chat("default").generate("Hello");
 ```
 
-## Providers
+## Provider
 
-Two provider types, one protocol each:
+CodeBuddy is the sole upstream:
 
 | Provider | Protocol | Notes |
 |----------|----------|-------|
 | **CodeBuddy** | OpenAI `/v2/chat/completions` | CLI request-header fingerprinting, prompt replacement |
-| **NVIDIA** | OpenAI `/v1/chat/completions` | Token-bucket rate limiting, 429 backoff |
-
-Add a new provider by subclassing `OpenAIProvider` or `AnthropicProvider` in `src/providers/`. See [Provider Guide](docs/provider-guide.md).
 
 ## Environment Variables
 
-At least one provider API key is required.
+`CODEBUDDY_API_KEY` is required.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CODEBUDDY_API_KEY` | At least one | — | Enable CodeBuddy provider |
-| `NVIDIA_API_KEY` | At least one | — | Enable NVIDIA provider |
+| `CODEBUDDY_API_KEY` | Yes | — | Enable CodeBuddy provider |
 | `CODEBUDDY_BASE_URL` | No | `https://www.codebuddy.ai` | Also: `https://copilot.tencent.com` (internal) |
 | `CODEBUDDY_MODELS` | No | `default` | Comma-separated model aliases |
 | `CODEBUDDY_TARGET_MODEL` | No | (same as alias) | Real upstream model name |
 | `CODEBUDDY_CLI_VERSION` | No | `2.110.0` | Override auto-detected version |
-| `NVIDIA_BASE_URL` | No | `https://integrate.api.nvidia.com/v1` | |
-| `NVIDIA_MODELS` | No | (none) | Comma-separated model aliases |
-| `NVIDIA_TARGET_MODEL` | No | `z-ai/glm-5.1` | |
-| `NVIDIA_RPM` | No | `40` | Requests per minute |
-| `NVIDIA_BURST` | No | `5` | Token bucket burst capacity |
-| `DEFAULT_PROVIDER` | No | First configured | Fallback when model not claimed |
 | `DEFAULT_MODEL` | No | (none) | Default model when request omits it |
 | `PORT` | No | `3456` | |
 | `HOST` | No | `127.0.0.1` | |
@@ -73,23 +62,16 @@ At least one provider API key is required.
 
 ```
 POST /v1/chat/completions
-  ├─ handleChatCompletions()
-  │   ├─ providerFor(model)  →  select provider
-  │   ├─ isCodeBuddy?
-  │   │   ├─ YES → handleCodeBuddyRequest()  (full adaptation stack)
-  │   │   └─ NO  → handlePassthroughRequest() (pure passthrough)
-  │   └─ fetchUpstream(body)
-  │       ├─ provider.resolveURL()
-  │       ├─ provider.buildHeaders()
-  │       └─ provider.preRequest()  (model alias → real name)
-  │
-  POST /v1/messages
-    └─ handleMessages() → pure byte-level passthrough
+  └─ handleChatCompletions() → handleCodeBuddyRequest()  (full adaptation stack)
+      ├─ fetchUpstream(body)
+      │   ├─ provider.resolveURL()    → /v2/chat/completions
+      │   ├─ provider.buildHeaders()  → CLI fingerprint headers
+      │   └─ provider.preRequest()    → model alias → real name
+      ├─ stream:true  → SSE field cleaning + pipe to client
+      └─ stream:false → aggregate SSE → single JSON response
 ```
 
 - **CodeBuddy path**: prompt replacement, content filtering, forced streaming, SSE field cleaning, CLI fingerprint headers
-- **Passthrough path**: original body → upstream → raw bytes → client
-- **Anthropic path**: protocol declared by route path, no format conversion
 
 See [Request Paths](docs/request-paths.md) and [Design Decisions](docs/design-decisions.md) for details.
 

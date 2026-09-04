@@ -1,10 +1,9 @@
 /**
  * Upstream request dispatcher.
  *
- * Resolves the right provider for the request's model and delegates URL,
- * headers, body rewrites, and rate-limiting to it. The two base protocols
- * (openai / anthropic) are handled by the provider classes themselves;
- * private patches (CLI fingerprint, rate limit) sit on top.
+ * Resolves the provider for the request's model and delegates URL,
+ * headers, body rewrites, and rate-limiting to it. CodeBuddy's CLI
+ * fingerprint headers are applied at the provider layer.
  */
 import { providerRegistry } from '../config.js';
 

@@ -6,7 +6,6 @@ import { config } from "./config.js";
 import { getModels } from "./models.js";
 import { upstreamURLFor } from "./lib/upstream.js";
 import { handleChatCompletions } from "./routes/openai.js";
-import { handleMessages } from "./routes/anthropic.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -47,12 +46,9 @@ app.get("/v1/models", (_req, res) => {
 // OpenAI-compatible chat completions
 app.post("/v1/chat/completions", handleChatCompletions);
 
-// Anthropic Messages API
-app.post("/v1/messages", handleMessages);
-
 // 405 for known paths with wrong method, 404 for unknown
 app.use((req, res) => {
-  const knownPaths = ["/v1/chat/completions", "/v1/messages"];
+  const knownPaths = ["/v1/chat/completions"];
   if (knownPaths.includes(req.path) && req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res
@@ -65,8 +61,7 @@ app.use((req, res) => {
     .status(404)
     .json({
       error: {
-        message:
-          "Use POST /v1/chat/completions, POST /v1/messages, or GET /v1/models",
+        message: "Use POST /v1/chat/completions, or GET /v1/models",
       },
     });
 });
@@ -82,8 +77,7 @@ function startServer() {
     console.log(`
   ✦ workbuddy-api proxy running
 
-  OpenAI:    http://${config.host}:${config.port}/v1/chat/completions
-  Anthropic: http://${config.host}:${config.port}/v1/messages`);
+  OpenAI:    http://${config.host}:${config.port}/v1/chat/completions`);
 
     if (config.httpsEnabled) {
       try {
