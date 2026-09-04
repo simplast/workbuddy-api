@@ -295,8 +295,8 @@
   },
   {
     "credits": "x0.04 credits",
-    "id": "hy3-preview-agent",
-    "name": "Hy3 preview",
+    "id": "hy3",
+    "name": "Hy3",
     "vendor": "j",
     "maxOutputTokens": 64000,
     "maxInputTokens": 192000,
@@ -314,6 +314,27 @@
     }
   },
   {
+    "id": "hy4-preview",
+    "name": "Hy4 preview",
+    "vendor": "j",
+    "maxOutputTokens": 100000,
+    "maxInputTokens": 1000000,
+    "supportsToolCall": true,
+    "supportsImages": false,
+    "disabledMultimodal": true,
+    "maxAllowedSize": 1000000,
+    "supportsReasoning": true,
+    "onlyReasoning": true,
+    "temperature": 0.9,
+    "top_p": 1,
+    "reasoning": {
+      "effort": "high",
+      "summary": "auto"
+    },
+    "descriptionEn": "Tencent Hunyuan Hy4 preview - MoE 770B total / 49B active, 1M context",
+    "descriptionZh": "腾讯混元 Hy4 preview - MoE 总参数 770B / 激活 49B，1M 上下文"
+  },
+  {
     "credits": "x0.10 credits",
     "id": "hunyuan-chat",
     "name": "Hunyuan-Turbos",
@@ -328,8 +349,6 @@
     "credits": "x5.00 credits",
     "id": "hunyuan-image-v3.0",
     "name": "Hunyuan Image V3",
-    "tags": [
-      "text-to-image"
-    ]
+    "tags": ["text-to-image"]
   }
 ]
