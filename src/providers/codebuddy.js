@@ -56,12 +56,83 @@ function hexId(len = 32) {
 }
 
 /**
- * Build the CLI fingerprint headers.
- * @param {string} apiKey - for the X-User-Id suffix
+ * Derive a stable per-conversation id from the request body.
+ *
+ * Keyed on the SYSTEM prompt + the first user message: within one agent
+ * conversation those never change, while the tail grows with every turn —
+ * exactly the prefix the upstream cache needs to match. If a client sends
+ * no system message the first user message alone carries the identity.
  */
-function buildCliHeaders(apiKey) {
+function deriveConversationId(body) {
+  const PREFIX_SEED = crypto
+    .createHash("sha256")
+    .update("workbuddy-api:conversation-v1")
+    .digest();
+
+  if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
+    // No messages to identify the conversation by — keep one id per process
+    // so at least consecutive health-check-style calls share a bucket.
+    return processConversationId ??= uuidFromSeed(PREFIX_SEED);
+  }
+
+  const parts = [];
+  for (const m of body.messages) {
+    // System and developer messages are the conversation's stable identity.
+    if (m.role === "system" || m.role === "developer") {
+      parts.push(`${m.role}:${contentToText(m.content)}`);
+    }
+  }
+  // First user turn anchors conversations that have no system prompt.
+  const firstUser = body.messages.find((m) => m.role === "user");
+  if (firstUser) parts.push(`user:${contentToText(firstUser.content)}`);
+
+  const seed = parts.length
+    ? crypto.createHash("sha256").update(parts.join("\n")).digest()
+    : PREFIX_SEED;
+  return uuidFromSeed(seed);
+}
+
+let processConversationId = null;
+
+function uuidFromSeed(seed) {
+  const hex = Buffer.from(seed).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(
+    16,
+    20,
+  )}-${hex.slice(20, 32)}`;
+}
+
+function contentToText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((b) => b && typeof b.text === "string")
+      .map((b) => b.text)
+      .join("");
+  }
+  return "";
+}
+
+/**
+ * Build the CLI fingerprint headers.
+ *
+ * `X-Conversation-ID` must stay STABLE across the requests of one conversation:
+ * the upstream keys its prompt cache by conversation, so a fresh random id per
+ * request makes every request land in a different cache bucket — measured as
+ * 0% prefix-cache hits on 130K-token contexts (~3x credit burn). The official
+ * CLI keeps this header constant for a session (only messageId rotates).
+ *
+ * We derive it deterministically from a hash of the message history, so the
+ * same conversation keeps the same bucket while unrelated conversations stay
+ * isolated. `body` may be null (health checks etc.), which falls back to a
+ * per-process constant.
+ *
+ * @param {string} apiKey - for the X-User-Id suffix
+ * @param {object|null} body - the outgoing request body (messages[])
+ */
+export function buildCliHeaders(apiKey, body = null) {
   detectCliVersion();
-  const conversationId = crypto.randomUUID();
+  const conversationId = deriveConversationId(body);
   const requestId = hexId(32);
   const messageId = hexId(32);
   const traceId = hexId(32);
@@ -135,10 +206,10 @@ export class CodeBuddyProvider extends OpenAIProvider {
     return `${this.baseURL}/v2/chat/completions`;
   }
 
-  buildHeaders() {
+  buildHeaders(body = null) {
     return {
       ...super.buildHeaders(),
-      ...buildCliHeaders(this.apiKey),
+      ...buildCliHeaders(this.apiKey, body),
     };
   }
 }
