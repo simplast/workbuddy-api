@@ -18,8 +18,9 @@ npm run dev            # http://127.0.0.1:3456
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/v1/chat/completions` | OpenAI Chat Completions API |
-| `GET` | `/v1/models` | Model list (from CodeBuddy CLI cache) |
+| `POST` | `/v1/chat/completions` | OpenAI Chat Completions API (thinking effort passed through) |
+| `GET` | `/v1/models` | Model list with reasoning effort levels (from WorkBuddy product config) |
+| `GET` | `/v1/models/pi-catalog` | Ready-to-use Pi provider config (`?provider=name`) |
 | `GET` | `/health` | Health check |
 
 ## Usage

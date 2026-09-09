@@ -349,6 +349,161 @@
     "credits": "x5.00 credits",
     "id": "hunyuan-image-v3.0",
     "name": "Hunyuan Image V3",
-    "tags": ["text-to-image"]
+    "tags": [
+      "text-to-image"
+    ]
+  },
+  {
+    "contextWindow": {
+      "defaultLength": 300000,
+      "supportedLengths": [
+        300000,
+        1000000
+      ]
+    },
+    "credits": "x0.79",
+    "descriptionEn": "Great for daily use",
+    "descriptionZh": "能力均衡，适合日常使用",
+    "id": "glm-5.3",
+    "maxAllowedSize": 1000000,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 48000,
+    "name": "GLM-5.3",
+    "onlyReasoning": true,
+    "reasoning": {
+      "canDisableThinking": true,
+      "defaultEffort": "high",
+      "summary": "auto",
+      "supportedEfforts": [
+        "low",
+        "high",
+        "xhigh"
+      ]
+    },
+    "relatedModels": {
+      "lite": "glm-5.3",
+      "reasoning": "glm-5.3"
+    },
+    "supportsImages": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "tags": [
+      "craft"
+    ],
+    "temperature": 1,
+    "vendor": "e"
+  },
+  {
+    "contextWindow": {
+      "defaultLength": 300000,
+      "supportedLengths": [
+        300000,
+        1000000
+      ]
+    },
+    "credits": "x0.06",
+    "descriptionEn": "Native multimodal, excelling at complex, long-horizon autonomous tasks.",
+    "descriptionZh": "原生多模态，擅长处理复杂的长程自主任务。",
+    "id": "glm-5.3-flash",
+    "maxAllowedSize": 1000000,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 32000,
+    "name": "GLM-5.3-Flash",
+    "onlyReasoning": true,
+    "reasoning": {
+      "canDisableThinking": true,
+      "defaultEffort": "high",
+      "summary": "auto",
+      "supportedEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    "relatedModels": {
+      "lite": "glm-5.3-flash",
+      "reasoning": "glm-5.3-flash"
+    },
+    "supportsImages": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "temperature": 1,
+    "vendor": "f"
+  },
+  {
+    "contextWindow": {
+      "defaultLength": 300000,
+      "supportedLengths": [
+        300000,
+        1000000
+      ]
+    },
+    "credits": "x0.79",
+    "descriptionEn": "1M context, built for long-horizon tasks.",
+    "descriptionZh": "1M 上下文，擅长长程任务",
+    "id": "glm-5.2",
+    "maxAllowedSize": 1000000,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 48000,
+    "name": "GLM-5.2",
+    "onlyReasoning": true,
+    "reasoning": {
+      "canDisableThinking": true,
+      "defaultEffort": "high",
+      "summary": "auto",
+      "supportedEfforts": [
+        "high",
+        "xhigh"
+      ]
+    },
+    "relatedModels": {
+      "lite": "glm-5.2",
+      "reasoning": "glm-5.2"
+    },
+    "supportsImages": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "tags": [
+      "craft"
+    ],
+    "temperature": 1,
+    "vendor": "e"
+  },
+  {
+    "contextWindow": {
+      "defaultLength": 300000,
+      "supportedLengths": [
+        300000,
+        1000000
+      ]
+    },
+    "credits": "x1.62",
+    "descriptionEn": "Excels at complex, long-horizon autonomous tasks, with standout front-end skills and strong knowledge work and scientific reasoning",
+    "descriptionZh": "擅长处理复杂的长程自主任务，前端开发能力突出，同时在知识工作与科研推理上表现出色。",
+    "id": "kimi-k3-1",
+    "maxAllowedSize": 1000000,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 32000,
+    "name": "Kimi-K3",
+    "onlyReasoning": true,
+    "reasoning": {
+      "canDisableThinking": true,
+      "defaultEffort": "high",
+      "summary": "auto",
+      "supportedEfforts": [
+        "low",
+        "high",
+        "xhigh"
+      ]
+    },
+    "relatedModels": {
+      "lite": "kimi-k3-1",
+      "reasoning": "kimi-k3-1"
+    },
+    "supportsImages": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "temperature": 1,
+    "vendor": "f"
   }
 ]

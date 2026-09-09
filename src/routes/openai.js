@@ -84,22 +84,12 @@ async function handleCodeBuddyRequest({
     upstreamBody.messages = filterContentMessages(upstreamBody.messages);
   }
 
-  // Inject thinking/reasoning params for models that support it.
-  // The downstream (Claude Code via cc-switch) doesn't pass reasoning_effort
-  // to OpenAI-compatible endpoints, so we add it based on model prefix.
-  //
-  // IMPORTANT: Use reasoning_effort (not thinking.type), because
-  // copilot.tencent.com/v2 runs its own ThinkingFormatTranslatorRule which
-  // converts reasoning_effort → provider-native format internally.
-  // Passing thinking directly bypasses that translation and doesn't work.
-  // See docs/codebuddy-thinking-analysis.md for details.
-  if (
-    !upstreamBody.reasoning_effort &&
-    !upstreamBody.thinking &&
-    !upstreamBody.reasoning
-  ) {
-    injectThinkingParams(upstreamBody);
-  }
+  // Thinking params are passed through untouched.
+  // We deliberately do NOT inject reasoning_effort: the proxy stays a transparent
+  // pipe, and the downstream picks effort from the levels we advertise in
+  // /v1/models (supported_efforts), which mirror CodeBuddy's own config. Injecting
+  // a default here would silently override a downstream that intentionally left
+  // reasoning off. See docs/codebuddy-thinking-analysis.md for background.
 
   // Intercept standalone web_search: call CodeBuddy's search API directly
   // instead of routing to the LLM. Claude Code sends these as single-tool
@@ -397,67 +387,6 @@ async function aggregateCodeBuddyNonStream({
     usage,
   );
   logRequest({ model, startTime, usage });
-}
-
-// ─── Thinking params injection ─────────────────────────────────────────
-//
-// CodeBuddy backend (copilot.tencent.com/v2/chat/completions) uses
-// ThinkingFormatTranslatorRule internally, which expects reasoning_effort
-// as input and converts it to the provider-native format (e.g. for DeepSeek
-// it becomes thinking: { type: "enabled" }).
-//
-// We therefore inject reasoning_effort (the OpenAI-standard field) rather
-// than trying to guess the provider-native format. The backend handles
-// the translation.
-//
-// See docs/codebuddy-thinking-analysis.md for the full analysis.
-const THINKING_RULES = [
-  {
-    prefix: "deepseek",
-    apply: (b) => {
-      b.reasoning_effort = "high";
-    },
-  },
-  {
-    prefix: "glm",
-    apply: (b) => {
-      b.reasoning_effort = "high";
-    },
-  },
-  {
-    prefix: "minimax",
-    apply: (b) => {
-      b.reasoning_effort = "high";
-    },
-  },
-  {
-    prefix: "kimi",
-    apply: (b) => {
-      b.reasoning_effort = "high";
-    },
-  },
-  {
-    prefix: "moonshot",
-    apply: (b) => {
-      b.reasoning_effort = "high";
-    },
-  },
-  {
-    prefix: "qwen",
-    apply: (b) => {
-      b.reasoning_effort = "high";
-    },
-  },
-];
-
-function injectThinkingParams(body) {
-  const model = (body.model || "").toLowerCase();
-  for (const rule of THINKING_RULES) {
-    if (model.startsWith(rule.prefix)) {
-      rule.apply(body);
-      return;
-    }
-  }
 }
 
 // ─── Tool parameter schema sanitizer ────────────────────────────────────

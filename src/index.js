@@ -10,6 +10,18 @@ import { handleChatCompletions } from "./routes/openai.js";
 const app = express();
 app.use(express.json({ limit: "5mb" }));
 
+// Pi 的思考档位枚举（packages/ai/src/types.ts 的 ThinkingLevel，加 off）。
+// 与 CodeBuddy 客户端 i18n 里的 efforts 一致：minimal/low/medium/high/xhigh/max。
+const PI_THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
 // 健康检查
 app.get("/health", (_req, res) => {
   res.json({
@@ -39,8 +51,60 @@ app.get("/v1/models", (_req, res) => {
       supports_images: m.supportsImages,
       supports_tool_call: m.supportsToolCall,
       supports_reasoning: m.supportsReasoning,
+      supported_efforts: m.supportedEfforts,
+      default_effort: m.defaultEffort,
+      can_disable_thinking: m.canDisableThinking,
     })),
   });
+});
+
+// 供下游 Agent CLI（如 Pi）直接使用的模型目录片段。
+// 把上游的档位口径原样映射成 Pi 的 thinkingLevelMap，避免两边各写一份导致漂移。
+// 用法：pi models.json 里 providers.<name>.models 填这段，或 ?provider=name 取整份配置。
+app.get("/v1/models/pi-catalog", (req, res) => {
+  const models = getModels();
+  const baseURL = `${req.protocol}://${req.get("host")}/v1`;
+  const entries = models.map((m) => {
+    // Pi 档位 → 上游档位值。上游未声明 supportedEfforts 时只保留开关（不写 map）。
+    const thinkingLevelMap = m.supportedEfforts
+      ? Object.fromEntries(
+          PI_THINKING_LEVELS.map((level) => [
+            level,
+            m.supportedEfforts.includes(level) ? level : null,
+          ]),
+        )
+      : undefined;
+
+    return {
+      id: m.id,
+      name: m.name || m.id,
+      reasoning: !!m.supportsReasoning,
+      ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+      input: m.supportsImages ? ["text", "image"] : ["text"],
+      contextWindow: m.maxInputTokens || 128000,
+      maxTokens: m.maxOutputTokens || 16384,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+  });
+
+  if (req.query.provider) {
+    const providerName = String(req.query.provider);
+    return res.json({
+      providers: {
+        [providerName]: {
+          name: providerName,
+          baseUrl: baseURL,
+          api: "openai-completions",
+          // Proxy 不校验 key，随意占位；需要真实值时用 ?apiKey= 传入。
+          apiKey: String(req.query.apiKey || "proxy-injected"),
+          compat: { supportsStore: false, supportsReasoningEffort: true },
+          models: entries,
+        },
+      },
+    });
+  }
+
+  res.json(entries);
 });
 
 // OpenAI-compatible chat completions

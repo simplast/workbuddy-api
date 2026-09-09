@@ -34,8 +34,9 @@ npm start      # 生产
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/v1/chat/completions` | OpenAI 兼容，支持 stream |
-| GET  | `/v1/models` | 模型列表 |
+| POST | `/v1/chat/completions` | OpenAI 兼容，支持 stream，思考档位原样透传 |
+| GET  | `/v1/models` | 模型列表（含 supported_efforts / default_effort 档位口径） |
+| GET  | `/v1/models/pi-catalog` | Pi 可直接使用的 provider 配置片段（`?provider=name`） |
 | GET  | `/health` | 健康检查 |
 
 ## 环境变量
