@@ -212,4 +212,9 @@ export class CodeBuddyProvider extends OpenAIProvider {
       ...buildCliHeaders(this.apiKey, body),
     };
   }
+
+  /** Conversation id used for this request (cache diagnostics). */
+  getConversationId(body) {
+    return deriveConversationId(body);
+  }
 }

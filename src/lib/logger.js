@@ -67,7 +67,7 @@ function numCell(symbol, value, color) {
   return `\x1b[${color}m${cell(`${symbol}${fmtNum(value)}`, COL.num)}\x1b[0m`;
 }
 
-export function logRequest({ model, startTime, usage }) {
+export function logRequest({ model, startTime, usage, ctx }) {
   const now = new Date();
   const elapsed = Date.now() - startTime;
 
@@ -125,6 +125,12 @@ export function logRequest({ model, startTime, usage }) {
         usage.cached_tokens ??
         0,
       thinking_tokens: thinking,
+      // Cache diagnostics (from the chat route): which upstream cache bucket
+      // this request used, and fingerprints of the prompt prefix.
+      ...(ctx?.convId ? { conversation_id: ctx.convId } : {}),
+      ...(ctx?.sysHash ? { system_hash: ctx.sysHash } : {}),
+      ...(ctx?.bodyHash ? { body_hash: ctx.bodyHash } : {}),
+      ...(ctx?.msgCount != null ? { message_count: ctx.msgCount } : {}),
       credit: credit ?? null,
       total_tokens: usage.total_tokens ?? inp + out,
     };

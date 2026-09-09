@@ -1,5 +1,6 @@
 import { config } from "../config.js";
-import { fetchUpstream } from "../lib/upstream.js";
+import crypto from "node:crypto";
+import { fetchUpstream, providerFor } from "../lib/upstream.js";
 import { logRequest } from "../lib/logger.js";
 import { replaceSystemPrompt, filterContentMessages } from "../lib/prompt.js";
 import { normalizeOpenAIMessages } from "../lib/normalize.js";
@@ -107,6 +108,29 @@ async function handleCodeBuddyRequest({
 
   dumpRequest("openai-codebuddy", requestId, upstreamBody);
 
+  // Per-request context for cache diagnostics: the conversation id we derived
+  // and a fingerprint of the message prefix. When cache hit rates look wrong,
+  // the logged hashes tell us whether consecutive requests actually shared
+  // a stable prefix (same sysHash) and landed in the same cache bucket
+  // (same convId) — separating "our routing is unstable" from "upstream
+  // cache is flaky".
+  try {
+    const sys = upstreamBody.messages?.filter((m) => m.role === "system" || m.role === "developer") || [];
+    const sysHash = crypto.createHash("sha256").update(JSON.stringify(sys)).digest("hex").slice(0, 12);
+    const msgCount = upstreamBody.messages?.length ?? 0;
+    const bodyHash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify(upstreamBody.messages ?? []))
+      .digest("hex").slice(0, 12);
+    // Same derivation the provider uses for X-Conversation-ID, so the log
+    // shows exactly which upstream cache bucket the request landed in.
+    const provider = providerFor(upstreamBody.model || "");
+    const convId = typeof provider?.getConversationId === "function"
+      ? provider.getConversationId(upstreamBody)
+      : undefined;
+    req.__reqCtx = { convId, sysHash, bodyHash, msgCount };
+  } catch { /* diagnostics only */ }
+
   try {
     const upstream = await fetchUpstream(upstreamBody);
     if (!upstream.ok) {
@@ -124,6 +148,7 @@ async function handleCodeBuddyRequest({
         upstreamBody,
         startTime,
         requestId,
+        reqCtx: req.__reqCtx,
       });
     } else {
       return aggregateCodeBuddyNonStream({
@@ -132,6 +157,7 @@ async function handleCodeBuddyRequest({
         upstreamBody,
         startTime,
         requestId,
+        reqCtx: req.__reqCtx,
       });
     }
   } catch (err) {
@@ -152,6 +178,7 @@ async function pipeCodeBuddyStream({
   upstreamBody,
   startTime,
   requestId,
+  reqCtx,
 }) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -276,7 +303,7 @@ async function pipeCodeBuddyStream({
     streamUsage,
     pipeLogLines,
   );
-  logRequest({ model: streamModel, startTime, usage: streamUsage });
+  logRequest({ model: streamModel, startTime, usage: streamUsage, ctx: reqCtx });
 
   function aggregateChunkForDebug(chunk) {
     const lines = chunk.split("\n");
@@ -328,6 +355,7 @@ async function aggregateCodeBuddyNonStream({
   upstreamBody,
   startTime,
   requestId,
+  reqCtx,
 }) {
   const reader = upstream.body.getReader();
   const agg = aggregateSSEChunks();
@@ -386,7 +414,7 @@ async function aggregateCodeBuddyNonStream({
     toolCalls,
     usage,
   );
-  logRequest({ model, startTime, usage });
+  logRequest({ model, startTime, usage, ctx: reqCtx });
 }
 
 // ─── Tool parameter schema sanitizer ────────────────────────────────────
