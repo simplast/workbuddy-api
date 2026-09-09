@@ -133,6 +133,11 @@ function contentToText(content) {
 export function buildCliHeaders(apiKey, body = null) {
   detectCliVersion();
   const conversationId = deriveConversationId(body);
+  // Only X-Conversation-ID is stable across a conversation; the official CLI
+  // rotates conversation-request-id, trace-id, message-id and span-id on
+  // every request (verified by capturing three separate CLI turns — the
+  // apparent stability of these fields in an earlier capture was a same-turn
+  // retry pair). So they stay random here, matching CLI behavior.
   const requestId = hexId(32);
   const messageId = hexId(32);
   const traceId = hexId(32);
