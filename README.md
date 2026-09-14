@@ -78,7 +78,14 @@ See [Request Paths](docs/request-paths.md) and [Design Decisions](docs/design-de
 
 ## Model List
 
-Model list is loaded from CodeBuddy CLI's local cache at `~/.codebuddy/local_storage/`, refreshed every 60 seconds. No separate API call needed.
+Model list is loaded from the WorkBuddy desktop client's cloud product config cache
+(`~/.workbuddy/cache/acc-product-config-v3.json`, filtered to the craft agent's model
+whitelist), refreshed every 60 seconds. No separate API call needed. If that cache is
+missing, it falls back to `~/.codebuddy/local_storage/`, the CLI package config, and
+finally the bundled `src/builtin-models.json`.
+
+The bundled fallback is a machine-generated snapshot — regenerate it with
+`node scripts/sync-builtin-models.js` (or verify with `--check`) instead of editing by hand.
 
 ## License
 

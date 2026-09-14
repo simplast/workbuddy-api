@@ -45,11 +45,23 @@ CLI 版本探测为懒加载（首次请求时执行，不阻塞启动）。
 
 ## 模型加载优先级
 
-1. `~/.codebuddy/local_storage/` 中的云端缓存（支持 base64+gzip 压缩格式）
-2. CLI 包目录下的 `product.internal.json` / `product.json`
-3. 用户自定义 `~/.codebuddy/models.json`
+1. `~/.workbuddy/cache/acc-product-config-v3.json` — WorkBuddy 桌面端缓存的云端 product config（最新最全，glm-5.3 等只在这里），取 craft agent 的 `models` 白名单
+2. `~/.codebuddy/local_storage/` 中的云端缓存（按会话分片，支持 base64+gzip 压缩格式，可能过期）
+3. CLI 包目录下的 `product.internal.json` / `product.json`
+4. `src/builtin-models.json` — 随代码发布的兜底列表
+5. 用户自定义 `~/.codebuddy/models.json`（叠加在各来源之上，可覆盖字段）
 
-模型列表每 60 秒自动刷新一次。空结果有 60 秒退避，避免频繁重试 IO。
+来源之间取第一个命中的，不合并。模型列表每 60 秒自动刷新一次，空结果有 60 秒退避。
+
+### builtin 兜底列表必须机器生成
+
+`src/builtin-models.json` 是 product config 的原样快照，别手写——手写过一次的字段已经漂移过（hy4-preview 的 `maxOutputTokens` 写成 100000、`supportsImages` 写成 false、description 里的参数量是编的；hy3 缺 `supportedEfforts`、hy3-x 干脆缺失）。
+
+```bash
+node scripts/sync-builtin-models.js           # 从桌面端缓存重新生成
+node scripts/sync-builtin-models.js --check   # 校验是否同步（不一致时退出码 1）
+node scripts/sync-builtin-models.js --diff    # 打印差异模型 id，不写入
+```
 
 ## 日志管理
 

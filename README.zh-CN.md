@@ -19,7 +19,7 @@ npm run dev            # http://127.0.0.1:3456
 | 方法 | 路径 | 说明 |
 |--------|------|-------------|
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions API |
-| `GET` | `/v1/models` | 模型列表（从 CodeBuddy CLI 缓存读取） |
+| `GET` | `/v1/models` | 模型列表（从 WorkBuddy product config 读取，含思考档位） |
 | `GET` | `/health` | 健康检查 |
 
 ## 使用示例
@@ -77,7 +77,9 @@ POST /v1/chat/completions
 
 ## 模型列表
 
-模型列表从 CodeBuddy CLI 本地缓存 `~/.codebuddy/local_storage/` 加载，每 60 秒刷新一次，无需单独调用 API。
+模型列表从 WorkBuddy 桌面端缓存的云端 product config（`~/.workbuddy/cache/acc-product-config-v3.json`，取 craft agent 的模型白名单）加载，每 60 秒刷新一次，无需单独调用 API。该缓存不存在时依次回退到 `~/.codebuddy/local_storage/`、CLI 包内配置，最后是随代码发布的 `src/builtin-models.json`。
+
+内置兜底列表由脚本生成，不要手改——重新生成用 `node scripts/sync-builtin-models.js`，校验是否同步用 `--check`。
 
 ## 适配说明
 

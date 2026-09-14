@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node --max-old-space-size=256 src/index.js"
+    "start": "node --max-old-space-size=256 src/index.js",
+    "sync-models": "node scripts/sync-builtin-models.js",
+    "check-models": "node scripts/sync-builtin-models.js --check"
   },
   "keywords": [
     "openai",

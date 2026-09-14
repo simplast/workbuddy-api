@@ -8,6 +8,10 @@
  * 3. CLI 包目录下的 product.internal.json / product.json（bundled 静态列表）
  * 4. 内置兜底 builtin-models.json（随代码发布）
  * 5. 用户自定义 ~/.codebuddy/models.json（叠加在主来源之上）
+ *
+ * builtin-models.json 是 product config 中 craft agent 白名单的原样快照（含
+ * reasoning 档位与 credits），用 scripts/sync-builtin-models.js 重新生成，
+ * 不要手改——手写过一次的字段（maxOutputTokens/supportsImages）已经和上游漂移过。
  */
 import fs from 'node:fs';
 import path from 'node:path';
