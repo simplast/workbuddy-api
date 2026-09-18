@@ -26,7 +26,8 @@
         ├── tools 中的 JSON Schema 清洗（删除 anyOf/const/$schema）
         │
         ├── if (upstreamBody.messages)
-        │     ├── normalizeOpenAIMessages(messages)      ← 修正非标准格式
+        │     ├── normalizeOpenAIMessages(messages)      ← 修正非标准格式 +
+        │     │                                             reasoning_content → reasoning
         │     ├── replaceSystemPrompt(messages)          ← 替换/插入 system
         │     └── messages = filterContentMessages(messages)  ← 过滤敏感内容
         │
@@ -113,5 +114,5 @@ upstream SSE stream
 | SSE chunk 聚合 | `src/lib/sse.js` — `aggregateSSEChunks()` |
 | prompt 替换 | `src/lib/prompt.js` — `replaceSystemPrompt()` |
 | 内容清洗 | `src/lib/prompt.js` — `filterContentMessages()` |
-| 消息标准化 | `src/lib/normalize.js` — `normalizeOpenAIMessages()` |
+| 消息标准化 | `src/lib/normalize.js` — `normalizeOpenAIMessages()` / `normalizeReasoningField()` |
 | 上游调度 | `src/lib/upstream.js` — `fetchUpstream()` |

@@ -31,7 +31,27 @@ CodeBuddy 上游会在 SSE chunk 中填充这些空字段，清洗后恢复为�
 
 ## OpenAI 非标准消息修正
 
-`normalizeOpenAIMessages()` 修正非标准 OpenAI 消息——assistant content 为 text block 数组而非 string 时，合并为单个字符串。
+`normalizeOpenAIMessages()` 修正非标准 OpenAI 消息：
+- assistant content 为 text block 数组而非 string 时，合并为单个字符串
+- assistant `tool_calls[].function.arguments` 为对象时序列化为字符串
+- assistant `reasoning_content` 重命名为 `reasoning`（见下）
+
+### assistant reasoning 字段名：`reasoning`，不是 `reasoning_content`
+
+上游流式响应里历史轮次的思考以 `reasoning_content` delta 下发，客户端原样回传时也带 `reasoning_content`。但 CodeBuddy 网关**只认 `reasoning`**，`reasoning_content` 会被静默丢弃，导致模型在多轮对话中看不到自己此前的思考。
+
+用抓取到的 CodeBuddy CLI v2.122.0 真实请求体重放到 `copilot.tencent.com/v2` 验证（各 3 次，结果完全一致）：
+
+| 改动 | prompt_tokens |
+|------|---------------|
+| `reasoning_content` +990 字符 | Δ 0 |
+| `reasoning_content` +9900 字符 | Δ 0 |
+| `reasoning` +990 字符（带 `tools`） | Δ +220 |
+| `reasoning` +9900 字符（带 `tools`） | Δ +2200 |
+
+CLI 自己始终只发 `reasoning`：其内置的 `reasoning-content-backfill` 规则以 `caps.requiresReasoningContentOnAssistantMessages` 为前提，而 CodeBuddy product config 里的模型（如 `deepseek-v4.1-flash`）不声明该能力，所以规则不生效。因此不能指望上游帮我们桥接两个字段名。
+
+`normalize.js` 中的 `normalizeReasoningField()` 据此把 `reasoning_content` 改写成 `reasoning`（已存在 `reasoning` 时以它为准），并丢弃空值。注意这与「内联注入 content」的思路不同：字段改写是无损的，不会改变 prompt 前缀，也不会把整段思考重复计费。
 
 ## 请求头伪装
 

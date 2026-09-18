@@ -18,9 +18,8 @@ import { logDiag } from './logger.js';
  * Rules:
  * - assistant: content MUST be string | null.  Array of text blocks → joined string.
  * - assistant.tool_calls[].function.arguments: MUST be string (JSON-serialized). Object → string.
- * - reasoning_content is PRESERVED. DeepSeek thinking_mode requires it to be
- *   passed back for turns that involved tool calls; stripping it causes 400.
- *   See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+ * - assistant reasoning is renamed to the field CodeBuddy actually reads (`reasoning`).
+ *   See the note on `normalizeReasoningField` below.
  * - user: content CAN be string or array (multimodal).  Left as-is.
  * - tool / system: left as-is.
  */
@@ -29,6 +28,8 @@ export function normalizeOpenAIMessages(messages) {
 
   let fixed = 0;
   let argsFixed = 0;
+  let reasoningRenamed = 0;
+  let reasoningDropped = 0;
 
   for (const msg of messages) {
     if (msg.role !== 'assistant') continue;
@@ -57,17 +58,64 @@ export function normalizeOpenAIMessages(messages) {
       }
     }
 
-    // NOTE: reasoning_content is intentionally NOT stripped. DeepSeek's
-    // thinking_mode spec requires reasoning_content to be replayed for turns
-    // that produced tool_calls; removing it triggers a 400 on the next call.
+    const reasoning = normalizeReasoningField(msg);
+    if (reasoning === 'renamed') reasoningRenamed++;
+    else if (reasoning === 'dropped') reasoningDropped++;
   }
 
-  if (fixed > 0 || argsFixed > 0) {
+  if (fixed > 0 || argsFixed > 0 || reasoningRenamed > 0 || reasoningDropped > 0) {
     const parts = [];
     if (fixed > 0) parts.push(`${fixed} assistant message(s) with array content → string`);
     if (argsFixed > 0) parts.push(`${argsFixed} tool_calls arguments object → string`);
+    if (reasoningRenamed > 0) parts.push(`${reasoningRenamed} assistant reasoning_content → reasoning`);
+    if (reasoningDropped > 0) parts.push(`${reasoningDropped} empty reasoning_content dropped`);
     logDiag('[normalize]', parts.join(', '));
   }
 
   return messages;
+}
+
+/**
+ * Rename assistant `reasoning_content` to `reasoning`, the field CodeBuddy's
+ * gateway actually reads.
+ *
+ * The upstream emits prior-turn thinking as `reasoning_content` SSE deltas,
+ * so clients that replay our stream verbatim send `reasoning_content` back.
+ * The gateway silently ignores that field — verified by replaying captured
+ * CodeBuddy CLI v2.122.0 requests against copilot.tencent.com/v2:
+ *
+ *   reasoning_content +990 chars   → prompt_tokens Δ 0
+ *   reasoning_content +9900 chars  → prompt_tokens Δ 0
+ *   reasoning          +990 chars  → prompt_tokens Δ +220 (when `tools` present)
+ *   reasoning          +9900 chars → prompt_tokens Δ +2200 (when `tools` present)
+ *
+ * The CLI itself only ever sends `reasoning`; its bundled
+ * `reasoning-content-backfill` rule is gated on the
+ * `requiresReasoningContentOnAssistantMessages` capability, which CodeBuddy
+ * product-config models (e.g. deepseek-v4.1-flash) do not declare. So we must
+ * not rely on the upstream to bridge the two names — doing so makes the model
+ * blind to its own previous reasoning in multi-turn conversations.
+ *
+ * `reasoning_content` is dropped rather than kept alongside: the gateway
+ * ignores it today, and if it were ever honored too we would be replaying the
+ * same trace twice.
+ *
+ * @returns {'renamed'|'dropped'|null} what was done, for diagnostics
+ */
+function normalizeReasoningField(msg) {
+  if (!('reasoning_content' in msg)) return null;
+
+  const rc = msg.reasoning_content;
+  const incoming = typeof rc === 'string' && rc.length > 0;
+  const existing = typeof msg.reasoning === 'string' && msg.reasoning.length > 0;
+
+  // `reasoning` is what the gateway reads; only fill it from
+  // reasoning_content when the message doesn't already carry one.
+  if (incoming && !existing) msg.reasoning = rc;
+
+  // Dropped either way: the gateway ignores it, and keeping a duplicate would
+  // replay the same trace twice if that ever changed. Empty values go too, so
+  // the payload matches the CLI instead of carrying dead weight.
+  delete msg.reasoning_content;
+  return incoming ? 'renamed' : 'dropped';
 }
