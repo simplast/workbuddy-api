@@ -8,7 +8,19 @@ import { upstreamURLFor } from "./lib/upstream.js";
 import { handleChatCompletions } from "./routes/openai.js";
 
 const app = express();
-app.use(express.json({ limit: "5mb" }));
+
+// 请求体上限按 base64 图片的体积定，纯文本根本用不到这么多；不超过 8mb 也不是拍脑袋——
+// 它被内存卡住。
+//
+// 下限：下游（Pi）把每张图压到 512 KiB base64 才放进历史，8mb 能装下约 15 张，
+// 足够一次带图的请求；5mb 会在第二张未压缩的截图（3–4 MB base64）就 413。
+//
+// 上限：解析、bodyHash 序列化、fetch 再序列化各留一份副本，实测 14.7 MB 的 body
+// 让 RSS 从 73 MB 冲到 283 MB（≈ body 的 14 倍），而服务以 --max-old-space-size=256
+// 运行。 8mb 的峰值约 185 MB，留得下余量；要再抬限必须先抬堆上限，两者是同一个决定。
+const MAX_BODY = "8mb";
+
+app.use(express.json({ limit: MAX_BODY }));
 
 // Pi 的思考档位枚举（packages/ai/src/types.ts 的 ThinkingLevel，加 off）。
 // 与 CodeBuddy 客户端 i18n 里的 efforts 一致：minimal/low/medium/high/xhigh/max。
@@ -128,6 +140,36 @@ app.use((req, res) => {
         message: "Use POST /v1/chat/completions, or GET /v1/models",
       },
     });
+});
+
+// ─── body-parser errors ─────────────────────────────────────────────────────
+// Express 默认把这些错误渲染成 HTML 错误页，下游 agent 只能看到一坨
+// "413 <!DOCTYPE html>…"，和上游故障、网络故障混在一起没法分辨。改回 OpenAI 的
+// JSON 形状，把可操作的信息（上限、该压图）直接写进 message。
+app.use((err, _req, res, _next) => {
+  const status = err.status || err.statusCode || 500;
+
+  if (status === 413) {
+    return res.status(413).json({
+      error: {
+        type: "payload_too_large",
+        message:
+          `Request body exceeds the proxy limit of ${MAX_BODY}. ` +
+          "Images travel as base64, so compress or drop them before retrying.",
+      },
+    });
+  }
+
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({
+      error: { type: "invalid_json", message: "Request body is not valid JSON." },
+    });
+  }
+
+  console.error("[unhandled]", err);
+  res.status(status).json({
+    error: { type: "proxy_error", message: err.message || "Internal proxy error" },
+  });
 });
 
 // ─── Start ──────────────────────────────────────────────────────────────────
