@@ -1,4 +1,4 @@
-import { logDiag } from './logger.js';
+import { logDiag } from "./logger.js";
 
 /**
  * Normalize OpenAI Chat Completions messages for upstream compatibility.
@@ -32,15 +32,15 @@ export function normalizeOpenAIMessages(messages) {
   let reasoningDropped = 0;
 
   for (const msg of messages) {
-    if (msg.role !== 'assistant') continue;
+    if (msg.role !== "assistant") continue;
 
     // Fix content: array of text blocks → string
     if (Array.isArray(msg.content)) {
       // Merge text blocks into a single string
       const text = msg.content
-        .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
+        .filter((b) => b && b.type === "text" && typeof b.text === "string")
         .map((b) => b.text)
-        .join('');
+        .join("");
 
       // Preserve empty string (vs. null) so downstream can distinguish
       // "assistant said nothing" from "no content field at all"
@@ -51,7 +51,10 @@ export function normalizeOpenAIMessages(messages) {
     // Fix tool_calls: function.arguments object → JSON string
     if (Array.isArray(msg.tool_calls)) {
       for (const tc of msg.tool_calls) {
-        if (tc?.function?.arguments != null && typeof tc.function.arguments !== 'string') {
+        if (
+          tc?.function?.arguments != null &&
+          typeof tc.function.arguments !== "string"
+        ) {
           tc.function.arguments = JSON.stringify(tc.function.arguments);
           argsFixed++;
         }
@@ -59,17 +62,26 @@ export function normalizeOpenAIMessages(messages) {
     }
 
     const reasoning = normalizeReasoningField(msg);
-    if (reasoning === 'renamed') reasoningRenamed++;
-    else if (reasoning === 'dropped') reasoningDropped++;
+    if (reasoning === "renamed") reasoningRenamed++;
+    else if (reasoning === "dropped") reasoningDropped++;
   }
 
-  if (fixed > 0 || argsFixed > 0 || reasoningRenamed > 0 || reasoningDropped > 0) {
+  if (
+    fixed > 0 ||
+    argsFixed > 0 ||
+    reasoningRenamed > 0 ||
+    reasoningDropped > 0
+  ) {
     const parts = [];
-    if (fixed > 0) parts.push(`${fixed} assistant message(s) with array content → string`);
-    if (argsFixed > 0) parts.push(`${argsFixed} tool_calls arguments object → string`);
-    if (reasoningRenamed > 0) parts.push(`${reasoningRenamed} assistant reasoning_content → reasoning`);
-    if (reasoningDropped > 0) parts.push(`${reasoningDropped} empty reasoning_content dropped`);
-    logDiag('[normalize]', parts.join(', '));
+    if (fixed > 0)
+      parts.push(`${fixed} assistant message(s) with array content → string`);
+    if (argsFixed > 0)
+      parts.push(`${argsFixed} tool_calls arguments object → string`);
+    if (reasoningRenamed > 0)
+      parts.push(`${reasoningRenamed} assistant reasoning_content → reasoning`);
+    if (reasoningDropped > 0)
+      parts.push(`${reasoningDropped} empty reasoning_content dropped`);
+    logDiag("[normalize]", parts.join(", "));
   }
 
   return messages;
@@ -103,11 +115,12 @@ export function normalizeOpenAIMessages(messages) {
  * @returns {'renamed'|'dropped'|null} what was done, for diagnostics
  */
 function normalizeReasoningField(msg) {
-  if (!('reasoning_content' in msg)) return null;
+  if (!("reasoning_content" in msg)) return null;
 
   const rc = msg.reasoning_content;
-  const incoming = typeof rc === 'string' && rc.length > 0;
-  const existing = typeof msg.reasoning === 'string' && msg.reasoning.length > 0;
+  const incoming = typeof rc === "string" && rc.length > 0;
+  const existing =
+    typeof msg.reasoning === "string" && msg.reasoning.length > 0;
 
   // `reasoning` is what the gateway reads; only fill it from
   // reasoning_content when the message doesn't already carry one.
@@ -117,5 +130,5 @@ function normalizeReasoningField(msg) {
   // replay the same trace twice if that ever changed. Empty values go too, so
   // the payload matches the CLI instead of carrying dead weight.
   delete msg.reasoning_content;
-  return incoming ? 'renamed' : 'dropped';
+  return incoming ? "renamed" : "dropped";
 }
