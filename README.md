@@ -14,6 +14,32 @@ cp .env.example .env   # edit .env to add your CODEBUDDY_API_KEY
 npm run dev            # http://127.0.0.1:3456
 ```
 
+## Run as a Service (macOS)
+
+`bin/wb` manages a `launchd` agent that starts at login, restarts on exit, and
+runs in the background. The plist is a template in `deploy/`; `install` renders
+it into `~/Library/LaunchAgents` so the service definition is versioned with the
+code it starts.
+
+```bash
+./bin/wb install     # render plist, load agent, wait for /health
+./bin/wb status      # launchd state, pid, port owner, /health
+./bin/wb logs -f     # follow stdout ('./bin/wb err -f' for stderr)
+./bin/wb restart     # also how .env changes take effect
+./bin/wb stop        # unload until the next login
+./bin/wb uninstall   # unload and remove the plist
+```
+
+Service logs go to `~/.local/state/workbuddy-api/`; request logs stay in the
+repo's `logs/`. Node is resolved through the fnm `default` alias, falling back
+to `node` on `PATH` — `launchd` does not inherit your shell's environment, so
+the plist also pins `WorkingDirectory`, which `.env` loading and the relative
+TLS paths depend on.
+
+A crashed process comes back within `ThrottleInterval` (10s). When the service
+stays down, `./bin/wb doctor` checks Node, `.env`, the TLS certs, the rendered
+plist, and whether the port is held by a stray manual `npm start`.
+
 ## Endpoints
 
 | Method | Path | Description |

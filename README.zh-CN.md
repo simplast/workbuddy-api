@@ -14,6 +14,30 @@ cp .env.example .env   # 编辑 .env 填入 CODEBUDDY_API_KEY
 npm run dev            # http://127.0.0.1:3456
 ```
 
+## 后台服务（macOS）
+
+`bin/wb` 管理一个 `launchd` agent：登录后自启、进程退出自动拉起、后台常驻。
+plist 以模板形式放在 `deploy/`，`install` 时渲染进 `~/Library/LaunchAgents`，
+服务定义与它启动的代码一起纳入版本管理。
+
+```bash
+./bin/wb install     # 渲染 plist、加载 agent、等待 /health 就绪
+./bin/wb status      # launchd 状态、pid、端口占用者、/health
+./bin/wb logs -f     # 跟踪 stdout（stderr 用 './bin/wb err -f'）
+./bin/wb restart     # 改完 .env 后用这个生效
+./bin/wb stop        # 卸载服务，直到下次登录
+./bin/wb uninstall   # 卸载并删除 plist
+```
+
+服务日志在 `~/.local/state/workbuddy-api/`，请求日志仍在仓库的 `logs/`。
+Node 路径通过 fnm 的 `default` 别名解析（找不到则退回 `PATH` 上的 `node`）：
+`launchd` 不继承你 shell 的环境，所以 plist 里也固定了 `WorkingDirectory`，
+`.env` 加载和证书相对路径都依赖它。
+
+进程崩溃后会在 `ThrottleInterval`（10 秒）内重新拉起。服务起不来时跑
+`./bin/wb doctor`：依次检查 Node、`.env`、TLS 证书、已渲染的 plist，
+以及端口是否被遗漏的手工 `npm start` 占着。
+
 ## 端点
 
 | 方法 | 路径 | 说明 |

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.doer.workbuddy-api</string>
+
+    <!-- launchd has no fnm shim on PATH, so node is referenced by absolute
+         path. @@NODE@@ resolves to the fnm default alias, which survives
+         version switches. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>@@NODE@@</string>
+        <string>--max-old-space-size=256</string>
+        <string>src/index.js</string>
+    </array>
+
+    <!-- dotenv reads .env from cwd and the TLS paths are relative, so the
+         working directory is part of the contract, not a convenience. -->
+    <key>WorkingDirectory</key>
+    <string>@@REPO@@</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+        <key>HOME</key>
+        <string>@@HOME@@</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- ThrottleInterval caps respawn rate: a proxy that exits on a bad
+         config would otherwise loop through launchd at full speed. 10s keeps
+         crash recovery quick without a respawn storm. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>ExitTimeOut</key>
+    <integer>15</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>Nice</key>
+    <integer>5</integer>
+
+    <!-- launchd owns the log files; src/lib/logger.js keeps writing request
+         logs under the repo's logs/ directory. -->
+    <key>StandardOutPath</key>
+    <string>@@HOME@@/.local/state/workbuddy-api/service.log</string>
+    <key>StandardErrorPath</key>
+    <string>@@HOME@@/.local/state/workbuddy-api/service.error.log</string>
+</dict>
+</plist>

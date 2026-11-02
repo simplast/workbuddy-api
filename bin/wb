@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+#
+# workbuddy-api launchd service manager (macOS).
+#
+# The plist lives in the repo as a template; `install` renders it into
+# ~/Library/LaunchAgents so the service definition is versioned with the code
+# it starts and no machine-specific paths are committed.
+set -euo pipefail
+
+LABEL="com.doer.workbuddy-api"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEMPLATE="$ROOT/deploy/$LABEL.plist.in"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+STATE="$HOME/.local/state/workbuddy-api"
+DOMAIN="gui/$(id -u)"
+TARGET="$DOMAIN/$LABEL"
+
+die() {
+  echo "wb: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<EOF
+usage: bin/wb <command>
+
+  install     render the plist, load it, and start the service (idempotent)
+  uninstall   stop the service and remove the plist
+  start       load and start the service
+  stop        unload the service until the next login or 'start'
+  disable     keep the service down across logins
+  enable      undo 'disable' (does not start it)
+  restart     restart the service (also picks up .env changes)
+  status      show launchd state, pid, port, and /health
+  logs [-f]   tail the service log (add -f to follow)
+  err  [-f]   tail the service error log
+  doctor      check node, .env, certs, plist, and port conflicts
+EOF
+}
+
+resolve_node() {
+  local alias="$HOME/.local/share/fnm/aliases/default/bin/node"
+  if [[ -x "$alias" ]]; then
+    printf '%s\n' "$alias"
+    return
+  fi
+  command -v node || die "node not found — install Node.js >= 18 or set up fnm"
+}
+
+render() {
+  [[ -f "$TEMPLATE" ]] || die "missing template: $TEMPLATE"
+  mkdir -p "$STATE" "$HOME/Library/LaunchAgents"
+  local node
+  node="$(resolve_node)"
+  sed -e "s|@@NODE@@|$node|g" \
+      -e "s|@@HOME@@|$HOME|g" \
+      -e "s|@@REPO@@|$ROOT|g" \
+      "$TEMPLATE" >"$PLIST"
+}
+
+is_loaded() {
+  launchctl print "$TARGET" >/dev/null 2>&1
+}
+
+pid_of() {
+  launchctl print "$TARGET" 2>/dev/null | awk -F' = ' '/^[[:space:]]+pid = /{print $2; exit}'
+}
+
+port_of() {
+  local port
+  port="$(grep -E '^PORT=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 || true)"
+  printf '%s\n' "${port:-3456}"
+}
+
+# launchd returns from bootstrap before node has bound the socket, so status
+# taken immediately after a (re)start would report a healthy service as down.
+wait_ready() {
+  local port i
+  port="$(port_of)"
+  for i in $(seq 1 15); do
+    if curl -fsS --max-time 2 "http://127.0.0.1:$port/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+do_install() {
+  [[ -f "$ROOT/.env" ]] || die "missing $ROOT/.env — copy .env.example and set CODEBUDDY_API_KEY"
+  if is_loaded; then
+    # A previously loaded service holds the port, and launchd only rereads the
+    # plist on a fresh bootstrap.
+    launchctl bootout "$TARGET" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      is_loaded || break
+      sleep 1
+    done
+  fi
+  render
+  launchctl bootstrap "$DOMAIN" "$PLIST"
+  launchctl enable "$TARGET"
+  echo "installed $LABEL -> $PLIST"
+  wait_ready || echo "warn: not answering yet — check 'bin/wb err'"
+  do_status
+}
+
+do_uninstall() {
+  launchctl bootout "$TARGET" 2>/dev/null || true
+  rm -f "$PLIST"
+  echo "uninstalled $LABEL (state kept in $STATE)"
+}
+
+do_status() {
+  local pid=""
+  if is_loaded; then
+    pid="$(pid_of)"
+    echo "launchd   : loaded ($TARGET)"
+    echo "pid       : ${pid:-none (spawn pending — check 'bin/wb err')}"
+  else
+    echo "launchd   : not loaded"
+  fi
+
+  local port
+  port="$(port_of)"
+
+  # A port held by someone else is the one failure mode that still answers
+  # /health correctly, so the owner is checked before the health probe.
+  local owner
+  owner="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+  if [[ -z "$owner" ]]; then
+    echo "port $port  : not listening"
+  elif [[ -n "$pid" && "$owner" == "$pid" ]]; then
+    echo "port $port  : listening (service)"
+  else
+    echo "port $port  : listening (pid $owner — NOT the service)"
+  fi
+
+  if command -v curl >/dev/null; then
+    local health
+    health="$(curl -fsS --max-time 3 "http://127.0.0.1:$port/health" 2>/dev/null || true)"
+    echo "health    : ${health:-unreachable}"
+  fi
+}
+
+do_doctor() {
+  local ok=0
+  if [[ -n "$(resolve_node)" ]]; then
+    echo "ok    node      $(resolve_node)"
+  else
+    echo "FAIL  node      not found"
+    ok=1
+  fi
+
+  if [[ -f "$ROOT/.env" ]]; then
+    if grep -qE '^CODEBUDDY_API_KEY=.+' "$ROOT/.env"; then
+      echo "ok    .env      CODEBUDDY_API_KEY set"
+    else
+      echo "FAIL  .env      CODEBUDDY_API_KEY empty"
+      ok=1
+    fi
+  else
+    echo "FAIL  .env      missing"
+    ok=1
+  fi
+
+  local key cert
+  key="$(grep -E '^HTTPS_KEY_PATH=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 || true)"
+  cert="$(grep -E '^HTTPS_CERT_PATH=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 || true)"
+  for f in "${key:-certs/localhost.key}" "${cert:-certs/localhost.crt}"; do
+    if [[ -f "$ROOT/$f" ]]; then
+      echo "ok    tls       $f"
+    else
+      echo "FAIL  tls       $f missing (node scripts/gen-cert.js)"
+      ok=1
+    fi
+  done
+
+  if [[ -f "$PLIST" ]]; then
+    echo "ok    plist     $PLIST"
+  else
+    echo "warn  plist     not rendered — run: bin/wb install"
+  fi
+
+  local port running
+  port="$(grep -E '^PORT=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 || true)"
+  port="${port:-3456}"
+  running="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+  if [[ -z "$running" ]]; then
+    echo "ok    port      $port free"
+  elif [[ "$running" == "$(pid_of)" ]]; then
+    echo "ok    port      $port held by the service (pid $running)"
+  else
+    echo "FAIL  port      $port held by pid $running — a manual 'npm start' is still running"
+    ok=1
+  fi
+
+  return $ok
+}
+
+do_logs() {
+  local name="$1"
+  shift
+  local file="$STATE/service.log" follow=0 arg
+  [[ "$name" == error ]] && file="$STATE/service.error.log"
+  for arg in "$@"; do
+    case "$arg" in
+      -f|--follow) follow=1 ;;
+      *) die "unknown option for logs: $arg" ;;
+    esac
+  done
+  [[ -f "$file" ]] || die "no log file yet: $file"
+  if ((follow)); then tail -n 80 -f "$file"; else tail -n 80 "$file"; fi
+}
+
+case "${1:-}" in
+  install) do_install ;;
+  uninstall) do_uninstall ;;
+  start)
+    if is_loaded; then
+      launchctl kickstart "$TARGET"
+    else
+      [[ -f "$PLIST" ]] || render
+      launchctl bootstrap "$DOMAIN" "$PLIST"
+    fi
+    wait_ready && echo "started $LABEL"
+    ;;
+  stop) launchctl bootout "$TARGET" 2>/dev/null && echo "stopped $LABEL (until next login)" ;;
+  disable) launchctl disable "$TARGET" && launchctl bootout "$TARGET" 2>/dev/null; echo "disabled $LABEL" ;;
+  enable) launchctl enable "$TARGET" && echo "enabled $LABEL (start with: bin/wb start)" ;;
+  restart) launchctl kickstart -k "$TARGET" && wait_ready && echo "restarted $LABEL" ;;
+  status) do_status ;;
+  logs) do_logs out "${@:2}" ;;
+  err) do_logs error "${@:2}" ;;
+  doctor) do_doctor ;;
+  ""|-h|--help|help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac
