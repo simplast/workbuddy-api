@@ -1,6 +1,6 @@
 [
   {
-    "credits": "x0.21",
+    "credits": "x0.15",
     "descriptionEn": "Prioritizes speed for simple tasks and quick answers",
     "descriptionZh": "优先响应速度，适合简单任务与快速问答",
     "id": "fast-model",
@@ -14,6 +14,11 @@
       "effort": "medium",
       "summary": "auto"
     },
+    "relatedModels": {
+      "builtin-lite": "wb-lite",
+      "lite": "fast-model",
+      "reasoning": "fast-model"
+    },
     "supportsImages": true,
     "supportsReasoning": true,
     "supportsToolCall": true,
@@ -21,7 +26,7 @@
     "vendor": "f"
   },
   {
-    "credits": "x0.65",
+    "credits": "x0.50",
     "descriptionEn": "Balances speed and quality for most everyday tasks",
     "descriptionZh": "兼顾速度与质量，适合大多数日常工作",
     "id": "balanced-model",
@@ -35,6 +40,11 @@
       "effort": "medium",
       "summary": "auto"
     },
+    "relatedModels": {
+      "builtin-lite": "wb-lite",
+      "lite": "balanced-model",
+      "reasoning": "balanced-model"
+    },
     "supportsImages": true,
     "supportsReasoning": true,
     "supportsToolCall": true,
@@ -42,7 +52,7 @@
     "vendor": "f"
   },
   {
-    "credits": "x1.20",
+    "credits": "x1.00",
     "descriptionEn": "Prioritizes depth and accuracy for complex analysis and high-stakes tasks",
     "descriptionZh": "优先深度与准确性，适合复杂分析和高要求任务",
     "id": "deep-model",
@@ -55,6 +65,11 @@
       "effort": "medium",
       "summary": "auto"
     },
+    "relatedModels": {
+      "builtin-lite": "wb-lite",
+      "lite": "deep-model",
+      "reasoning": "deep-model"
+    },
     "supportsImages": true,
     "supportsReasoning": true,
     "supportsToolCall": true,
@@ -66,7 +81,8 @@
       "defaultLength": 300000,
       "supportedLengths": [
         300000,
-        1000000
+        600000,
+        960000
       ]
     },
     "credits": "x0.29",
@@ -74,8 +90,11 @@
     "descriptionZh": "混元思考模型，具有增强的推理能力",
     "disabledMultimodal": false,
     "id": "hy4-preview",
+    "labels": [
+      "enterprise:selfhost"
+    ],
     "maxAllowedSize": 1000000,
-    "maxInputTokens": 1000000,
+    "maxInputTokens": 960000,
     "maxOutputTokens": 64000,
     "name": "Hy4 preview",
     "onlyReasoning": true,
@@ -86,6 +105,11 @@
       "supportedEfforts": [
         "high"
       ]
+    },
+    "relatedModels": {
+      "builtin-lite": "wb-lite",
+      "lite": "hy4-preview",
+      "reasoning": "hy4-preview"
     },
     "supportsImages": true,
     "supportsReasoning": true,
@@ -100,6 +124,9 @@
     "descriptionZh": "混元思考模型，具有增强的推理能力",
     "disabledMultimodal": false,
     "id": "hy3",
+    "labels": [
+      "enterprise:selfhost"
+    ],
     "maxAllowedSize": 192000,
     "maxInputTokens": 192000,
     "maxOutputTokens": 64000,
@@ -115,6 +142,7 @@
       ]
     },
     "relatedModels": {
+      "builtin-lite": "wb-lite",
       "lite": "hy3",
       "reasoning": "hy3"
     },
@@ -134,6 +162,9 @@
     "descriptionZh": "混元思考模型，具有增强的推理能力",
     "disabledMultimodal": false,
     "id": "hy3-x",
+    "labels": [
+      "enterprise:selfhost"
+    ],
     "maxAllowedSize": 192000,
     "maxInputTokens": 192000,
     "maxOutputTokens": 64000,
@@ -149,6 +180,7 @@
       ]
     },
     "relatedModels": {
+      "builtin-lite": "wb-lite",
       "lite": "hy3-x",
       "reasoning": "hy3-x"
     },
@@ -167,23 +199,31 @@
       "defaultLength": 300000,
       "supportedLengths": [
         300000,
+        600000,
         1000000
       ]
     },
-    "credits": "x0.03",
+    "credits": "x0.11",
     "descriptionEn": "DeepSeek flagship model, supporting 1M context window, native multimodal model",
-    "descriptionZh": "DeepSeek 旗舰模型，支持 1M 上下文窗口，原生多模态",
+    "descriptionZh": "已更新至 V4.1-Flash-1017最新版，支持1M上下文窗口，原生多模态",
     "id": "deepseek-v4.1-flash",
     "maxAllowedSize": 1000000,
     "maxInputTokens": 1000000,
     "maxOutputTokens": 128000,
-    "name": "Deepseek-V4.1-Flash",
+    "name": "DeepSeek-V4.1-Flash",
     "onlyReasoning": true,
     "reasoning": {
-      "effort": "high",
-      "summary": "auto"
+      "canDisableThinking": true,
+      "defaultEffort": "high",
+      "summary": "auto",
+      "supportedEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
     },
     "relatedModels": {
+      "builtin-lite": "wb-lite",
       "lite": "deepseek-v4.1-flash",
       "reasoning": "deepseek-v4.1-flash"
     },
@@ -198,12 +238,13 @@
       "defaultLength": 300000,
       "supportedLengths": [
         300000,
+        600000,
         1000000
       ]
     },
-    "credits": "x0.79",
-    "descriptionEn": "Great for daily use",
-    "descriptionZh": "能力均衡，适合日常使用",
+    "credits": "x0.69",
+    "descriptionEn": "Flagship model, excelling at complex software engineering and long-horizon agent tasks",
+    "descriptionZh": "旗舰模型，擅长复杂软件工程与长程 Agent 任务",
     "id": "glm-5.3",
     "maxAllowedSize": 1000000,
     "maxInputTokens": 1000000,
@@ -211,7 +252,7 @@
     "name": "GLM-5.3",
     "onlyReasoning": true,
     "reasoning": {
-      "canDisableThinking": true,
+      "canDisableThinking": false,
       "defaultEffort": "high",
       "summary": "auto",
       "supportedEfforts": [
@@ -221,6 +262,7 @@
       ]
     },
     "relatedModels": {
+      "builtin-lite": "wb-lite",
       "lite": "glm-5.3",
       "reasoning": "glm-5.3"
     },
@@ -238,20 +280,21 @@
       "defaultLength": 300000,
       "supportedLengths": [
         300000,
+        600000,
         1000000
       ]
     },
-    "credits": "x0.06",
-    "descriptionEn": "Native multimodal, excelling at complex, long-horizon autonomous tasks.",
-    "descriptionZh": "原生多模态，擅长处理复杂的长程自主任务。",
+    "credits": "x0.08",
+    "descriptionEn": "Native multimodal model, excelling at visual understanding and professional tasks",
+    "descriptionZh": "原生多模态模型，擅长视觉理解与专业任务",
     "id": "glm-5.3-flash",
     "maxAllowedSize": 1000000,
     "maxInputTokens": 1000000,
-    "maxOutputTokens": 32000,
+    "maxOutputTokens": 131072,
     "name": "GLM-5.3-Flash",
     "onlyReasoning": true,
     "reasoning": {
-      "canDisableThinking": true,
+      "canDisableThinking": false,
       "defaultEffort": "high",
       "summary": "auto",
       "supportedEfforts": [
@@ -261,6 +304,7 @@
       ]
     },
     "relatedModels": {
+      "builtin-lite": "wb-lite",
       "lite": "glm-5.3-flash",
       "reasoning": "glm-5.3-flash"
     },
@@ -275,6 +319,7 @@
       "defaultLength": 300000,
       "supportedLengths": [
         300000,
+        600000,
         1000000
       ]
     },
@@ -297,6 +342,7 @@
       ]
     },
     "relatedModels": {
+      "builtin-lite": "wb-lite",
       "lite": "glm-5.2",
       "reasoning": "glm-5.2"
     },
@@ -310,84 +356,39 @@
     "vendor": "e"
   },
   {
-    "credits": "x0.79",
-    "descriptionEn": "Great for daily use",
-    "descriptionZh": "能力均衡，适合日常使用",
-    "id": "glm-5.1",
-    "maxAllowedSize": 200000,
-    "maxInputTokens": 200000,
-    "maxOutputTokens": 48000,
-    "name": "GLM-5.1",
-    "onlyReasoning": true,
-    "reasoning": {
-      "effort": "medium",
-      "summary": "auto"
-    },
-    "relatedModels": {
-      "lite": "glm-5.1",
-      "reasoning": "glm-5.1"
-    },
-    "supportsImages": true,
-    "supportsReasoning": true,
-    "supportsToolCall": true,
-    "tags": [
-      "craft"
-    ],
-    "temperature": 1,
-    "vendor": "e"
-  },
-  {
-    "credits": "x0.71",
-    "descriptionEn": "Native Multimodal Model",
-    "descriptionZh": "原生多模态模型",
-    "id": "glm-5v-turbo",
-    "maxAllowedSize": 200000,
-    "maxInputTokens": 200000,
-    "maxOutputTokens": 64000,
-    "name": "GLM-5v-Turbo",
-    "onlyReasoning": true,
-    "reasoning": {
-      "effort": "medium",
-      "summary": "auto"
-    },
-    "relatedModels": {
-      "lite": "glm-5v-turbo",
-      "reasoning": "glm-5v-turbo"
-    },
-    "supportsImages": true,
-    "supportsReasoning": true,
-    "supportsToolCall": true,
-    "tags": [
-      "craft"
-    ],
-    "temperature": 1,
-    "vendor": "e"
-  },
-  {
     "contextWindow": {
-      "defaultLength": 300000,
+      "defaultLength": 1000000,
       "supportedLengths": [
         300000,
-        512000
+        600000,
+        1000000
       ]
     },
-    "credits": "x0.25",
-    "descriptionEn": "Native multimodal model for coding and agents tasks",
-    "descriptionZh": "原生多模态，擅长代码、智能体任务",
-    "disabledMultimodal": false,
-    "id": "minimax-m3",
-    "maxAllowedSize": 512000,
-    "maxInputTokens": 512000,
-    "maxOutputTokens": 64000,
-    "name": "MiniMax-M3",
+    "credits": "x0.08",
+    "descriptionEn": "Blazing-fast, anonymous model with strong coding skills and native multimodal input.",
+    "descriptionZh": "推理速度极快，编码能力强劲，并支持原生多模态输入的匿名大模型",
+    "id": "space-bunny",
+    "maxAllowedSize": 1000000,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 128000,
+    "name": "Space-Bunny",
     "onlyReasoning": true,
     "reasoning": {
-      "effort": "medium",
-      "summary": "auto"
+      "canDisableThinking": false,
+      "defaultEffort": "max",
+      "summary": "auto",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
     },
     "relatedModels": {
-      "lite": "minimax-m3",
-      "reasoning": "minimax-m3"
+      "builtin-lite": "wb-lite",
+      "lite": "space-bunny",
+      "reasoning": "space-bunny"
     },
     "supportsImages": true,
     "supportsReasoning": true,
@@ -400,6 +401,87 @@
       "defaultLength": 300000,
       "supportedLengths": [
         300000,
+        600000,
+        1000000
+      ]
+    },
+    "credits": "x0.08",
+    "descriptionEn": "Natively multimodal, strong at Office, agentic, and coding tasks, with excellent inference speed.",
+    "descriptionZh": "原生多模态，擅长office、agentic、编程任务，推理速度优异",
+    "id": "minimax-m3.1-flash",
+    "maxAllowedSize": 1000000,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 128000,
+    "name": "MiniMax-M3.1-Flash",
+    "onlyReasoning": true,
+    "reasoning": {
+      "canDisableThinking": false,
+      "defaultEffort": "max",
+      "summary": "auto",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "relatedModels": {
+      "builtin-lite": "wb-lite",
+      "lite": "minimax-m3.1-flash",
+      "reasoning": "minimax-m3.1-flash"
+    },
+    "supportsImages": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "temperature": 1,
+    "vendor": "f"
+  },
+  {
+    "contextWindow": {
+      "defaultLength": 300000,
+      "supportedLengths": [
+        300000,
+        600000,
+        1000000
+      ]
+    },
+    "credits": "x0.97",
+    "descriptionEn": "Kimi's new flagship model. Office work, coding, 3D creation, and long-horizon agent capabilities, all fully upgraded.",
+    "descriptionZh": "Kimi 全新旗舰模型，3万亿级参数。办公、代码、3D 创作与长程 Agent 能力全面升级。",
+    "id": "kimi-k3.1-pro",
+    "maxAllowedSize": 1000000,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 32000,
+    "name": "Kimi-K3.1-Pro",
+    "onlyReasoning": true,
+    "reasoning": {
+      "canDisableThinking": false,
+      "defaultEffort": "high",
+      "summary": "auto",
+      "supportedEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    "relatedModels": {
+      "builtin-lite": "wb-lite",
+      "lite": "kimi-k3.1-pro",
+      "reasoning": "kimi-k3.1-pro"
+    },
+    "supportsImages": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "temperature": 1,
+    "vendor": "f"
+  },
+  {
+    "contextWindow": {
+      "defaultLength": 300000,
+      "supportedLengths": [
+        300000,
+        600000,
         1000000
       ]
     },
@@ -423,6 +505,7 @@
       ]
     },
     "relatedModels": {
+      "builtin-lite": "wb-lite",
       "lite": "kimi-k3-1",
       "reasoning": "kimi-k3-1"
     },
@@ -438,6 +521,7 @@
       "defaultLength": 300000,
       "supportedLengths": [
         300000,
+        600000,
         1000000
       ]
     },
@@ -461,6 +545,7 @@
       ]
     },
     "relatedModels": {
+      "builtin-lite": "wb-lite",
       "lite": "kimi-k2.8-preview",
       "reasoning": "kimi-k2.8-preview"
     },
@@ -472,61 +557,11 @@
     "vendor": "f"
   },
   {
-    "credits": "x0.57",
-    "descriptionEn": "A multimodal model, good for daily use.",
-    "descriptionZh": "多模态模型，适合日常任务",
-    "id": "kimi-k2.7",
-    "maxAllowedSize": 256000,
-    "maxInputTokens": 256000,
-    "maxOutputTokens": 32000,
-    "name": "Kimi-K2.7-Code",
-    "onlyReasoning": true,
-    "reasoning": {
-      "effort": "medium",
-      "summary": "auto"
-    },
-    "relatedModels": {
-      "lite": "kimi-k2.7",
-      "reasoning": "kimi-k2.7"
-    },
-    "supportsImages": true,
-    "supportsReasoning": true,
-    "supportsToolCall": true,
-    "temperature": 1,
-    "vendor": "f"
-  },
-  {
-    "credits": "x0.52",
-    "descriptionEn": "A multimodal model, good for daily use.",
-    "descriptionZh": "多模态模型，适合日常任务",
-    "id": "kimi-k2.6",
-    "maxAllowedSize": 256000,
-    "maxInputTokens": 256000,
-    "maxOutputTokens": 32000,
-    "name": "Kimi-K2.6",
-    "onlyReasoning": true,
-    "reasoning": {
-      "effort": "medium",
-      "summary": "auto"
-    },
-    "relatedModels": {
-      "lite": "kimi-k2.6",
-      "reasoning": "kimi-k2.6"
-    },
-    "supportsImages": true,
-    "supportsReasoning": true,
-    "supportsToolCall": true,
-    "tags": [
-      "craft"
-    ],
-    "temperature": 1,
-    "vendor": "f"
-  },
-  {
     "contextWindow": {
       "defaultLength": 300000,
       "supportedLengths": [
         300000,
+        600000,
         1000000
       ]
     },
@@ -537,7 +572,7 @@
     "maxAllowedSize": 1000000,
     "maxInputTokens": 1000000,
     "maxOutputTokens": 128000,
-    "name": "Deepseek-V4-Pro",
+    "name": "DeepSeek-V4-Pro",
     "onlyReasoning": false,
     "reasoning": {
       "canDisableThinking": true,
@@ -549,6 +584,7 @@
       ]
     },
     "relatedModels": {
+      "builtin-lite": "wb-lite",
       "lite": "deepseek-v4-pro",
       "reasoning": "deepseek-v4-pro"
     },
@@ -557,5 +593,77 @@
     "supportsToolCall": true,
     "temperature": 1,
     "vendor": "f"
+  },
+  {
+    "contextWindow": {
+      "defaultLength": 300000,
+      "supportedLengths": [
+        300000,
+        1000000
+      ]
+    },
+    "credits": "x0.33",
+    "descriptionEn": "StepFun's flagship model, built for agents that do real work.",
+    "descriptionZh": "阶跃 StepFun 面向真实任务的新一代旗舰基模",
+    "iconUrl_en": "https://download.codebuddy.ai/codebuddy/ide/model-icons/stepfun-favicon.svg",
+    "id": "step-5-preview",
+    "maxAllowedSize": 1000000,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 64000,
+    "name": "Step-5-Preview",
+    "onlyReasoning": true,
+    "reasoning": {
+      "canDisableThinking": false,
+      "defaultEffort": "high",
+      "summary": "auto",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "relatedModels": {
+      "builtin-lite": "wb-lite",
+      "lite": "step-5-preview",
+      "reasoning": "step-5-preview"
+    },
+    "supportsImages": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "temperature": 1,
+    "vendor": "f"
+  },
+  {
+    "contextWindow": {
+      "defaultLength": 300000,
+      "supportedLengths": [
+        300000,
+        600000,
+        1000000
+      ]
+    },
+    "credits": "x0.13",
+    "descriptionEn": "Flagship reasoning model for professional, long-horizon, and complex workflows, with advanced research and cybersecurity capabilities.",
+    "descriptionZh": "旗舰推理模型，面向专业、长程、复杂工作流，并兼顾科学研究、网络安全等高阶能力",
+    "iconUrl_en": "https://download.codebuddy.ai/codebuddy/ide/model-icons/ook.png",
+    "id": "mimo-v2.6-pro",
+    "maxAllowedSize": 1000000,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 128000,
+    "name": "Xiaomi MiMo-V2.6-Pro",
+    "onlyReasoning": true,
+    "reasoning": {
+      "effort": "high",
+      "summary": "auto"
+    },
+    "relatedModels": {
+      "builtin-lite": "wb-lite",
+      "lite": "mimo-v2.6-pro",
+      "reasoning": "mimo-v2.6-pro"
+    },
+    "supportsImages": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "vendor": "e"
   }
 ]

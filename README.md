@@ -105,9 +105,11 @@ See [Request Paths](docs/request-paths.md) and [Design Decisions](docs/design-de
 ## Model List
 
 Model list is loaded from the WorkBuddy desktop client's cloud product config cache
-(`~/.workbuddy/cache/acc-product-config-v3.json`, filtered to the craft agent's model
-whitelist), refreshed every 60 seconds. No separate API call needed. If that cache is
-missing, it falls back to `~/.codebuddy/local_storage/`, the CLI package config, and
+(`~/.workbuddy/cache/acc-product-config-v3-<pid>-<uuid>.json`, filtered to the craft
+agent's model whitelist), refreshed every 60 seconds. The client writes one snapshot per
+process instance and shares the directory with its CLI config, so the loader picks the
+newest snapshot that carries an `agents` section. No separate API call needed. If no such
+cache exists, it falls back to `~/.codebuddy/local_storage/`, the CLI package config, and
 finally the bundled `src/builtin-models.json`.
 
 The bundled fallback is a machine-generated snapshot — regenerate it with

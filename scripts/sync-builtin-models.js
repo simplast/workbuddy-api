@@ -12,19 +12,17 @@
  *   node scripts/sync-builtin-models.js --check    # 只校验是否已同步（CI/提交前用）
  *   node scripts/sync-builtin-models.js --diff     # 打印差异，不写入
  *
- * 数据来源可用 WORKBUDDY_PRODUCT_CONFIG 覆盖，默认
- * ~/.workbuddy/cache/acc-product-config-v3.json。
+ * 数据来源由 src/lib/product-config.js 解析：默认取
+ * ~/.workbuddy/cache/acc-product-config-v3-<pid>-<uuid>.json 中 mtime 最新、
+ * 且带 agents 段的桌面端快照。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveProductConfig } from '../src/lib/product-config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = path.join(__dirname, '..', 'src', 'builtin-models.json');
-
-const HOME = process.env.HOME || process.env.USERPROFILE || '~';
-const PRODUCT_CONFIG = process.env.WORKBUDDY_PRODUCT_CONFIG
-  || path.join(process.env.WORKBUDDY_DIR || HOME, '.workbuddy', 'cache', 'acc-product-config-v3.json');
 
 // 体积大且与运行时无关的展示字段，不进兜底列表
 const DROP_FIELDS = new Set(['iconUrl']);
@@ -49,21 +47,15 @@ function readCurrent() {
   }
 }
 
-if (!fs.existsSync(PRODUCT_CONFIG)) {
-  fail(`找不到 product config: ${PRODUCT_CONFIG}\n`
-    + '    请先启动 WorkBuddy 桌面端让它同步云端配置，或用 WORKBUDDY_PRODUCT_CONFIG 指定路径。');
+// 桌面端缓存是多份带 pid/uuid 的快照，解析失败说明当前这份正在被写入。
+// 给出明确报错，不要把异常直接抛成堆栈。
+const resolved = resolveProductConfig();
+if (!resolved) {
+  fail('找不到可用的桌面端 product config\n'
+    + '    期望 ~/.workbuddy/cache/acc-product-config-v3-<pid>-<uuid>.json 中有一份带 agents 段。\n'
+    + '    请先启动 WorkBuddy 桌面端同步云端配置，或用 WORKBUDDY_PRODUCT_CONFIG 指定路径。');
 }
-
-// product config 是桌面端写的缓存，读到一半被写入/截断是可能的（退出或同步中）。
-// 给出明确报错，不要把 JSON 解析异常直接抛成堆栈。
-let raw;
-try {
-  raw = JSON.parse(fs.readFileSync(PRODUCT_CONFIG, 'utf8'));
-} catch (e) {
-  fail(`product config 解析失败: ${PRODUCT_CONFIG}\n    ${e.message}\n`
-    + '    缓存可能正在被桌面端写入，稍后重试或删除该文件让它重新同步。');
-}
-const config = raw.data || raw;
+const { path: configPath, config } = resolved;
 
 // 与 src/models.js 的 craftModelIds() 保持一致：以 craft agent 的白名单为准，
 // models[] 里还有大量未在 UI 展示的内部/历史模型。
@@ -114,4 +106,4 @@ if (DIFF || CHECK) {
 }
 
 fs.writeFileSync(OUT_PATH, text);
-console.log(`  ✓ 已写入 src/builtin-models.json（${models.length} 个模型，来源 ${PRODUCT_CONFIG}）`);
+console.log(`  ✓ 已写入 src/builtin-models.json（${models.length} 个模型，来源 ${configPath}）`);

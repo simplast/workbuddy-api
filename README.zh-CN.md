@@ -101,7 +101,7 @@ POST /v1/chat/completions
 
 ## 模型列表
 
-模型列表从 WorkBuddy 桌面端缓存的云端 product config（`~/.workbuddy/cache/acc-product-config-v3.json`，取 craft agent 的模型白名单）加载，每 60 秒刷新一次，无需单独调用 API。该缓存不存在时依次回退到 `~/.codebuddy/local_storage/`、CLI 包内配置，最后是随代码发布的 `src/builtin-models.json`。
+模型列表从 WorkBuddy 桌面端缓存的云端 product config（`~/.workbuddy/cache/acc-product-config-v3-<pid>-<uuid>.json`，取 craft agent 的模型白名单）加载，每 60 秒刷新一次，无需单独调用 API。桌面端每个进程实例写一份快照，同一目录里还混着 CLI 的 config，加载器按内容筛出带 `agents` 段的一份、再按 mtime 取最新。缓存不存在时依次回退到 `~/.codebuddy/local_storage/`、CLI 包内配置，最后是随代码发布的 `src/builtin-models.json`。
 
 内置兜底列表由脚本生成，不要手改——重新生成用 `node scripts/sync-builtin-models.js`，校验是否同步用 `--check`。
 

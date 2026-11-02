@@ -19,7 +19,7 @@ src/
 ├── config.js             # 环境变量配置
 ├── routes/
 │   └── openai.js         # POST /v1/chat/completions
-├── lib/                  # 工具：upstream, logger, normalize, prompt, sse, debug
+├── lib/                  # 工具：upstream, logger, normalize, prompt, sse, debug, product-config
 └── providers/            # 上游 provider：base, codebuddy, registry
 ```
 

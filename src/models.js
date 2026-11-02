@@ -2,8 +2,9 @@
  * 动态加载 CodeBuddy 模型列表
  *
  * 来源优先级（取第一个命中的，不做合并）：
- * 1. ~/.workbuddy/cache/acc-product-config-v3.json — workbuddy 桌面端缓存的云端
- *    product config。最新最全，glm-5.3 等新模型只在这里。
+ * 1. ~/.workbuddy/cache/acc-product-config-v3-*.json — workbuddy 桌面端缓存的云端
+ *    product config（按内容挑出带 agents 的那份，取 mtime 最新）。最新最全，
+ *    glm-5.3 等新模型与 deepseek-v4.1-flash 的 low/high/max 档位只在这里。
  * 2. local_storage/ 中的云端合并缓存（按会话分片，可能过期）
  * 3. CLI 包目录下的 product.internal.json / product.json（bundled 静态列表）
  * 4. 内置兜底 builtin-models.json（随代码发布）
@@ -18,16 +19,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import zlib from 'node:zlib';
+import { resolveProductConfig } from './lib/product-config.js';
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '~';
 const CODEBUDDY_DIR = process.env.CODEBUDDY_DIR || path.join(HOME, '.codebuddy');
 const LOCAL_STORAGE_DIR = path.join(CODEBUDDY_DIR, 'local_storage');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUILTIN_MODELS_PATH = path.join(__dirname, 'builtin-models.json');
-
-// 桌面端缓存的云端 product config。可用 WORKBUDDY_PRODUCT_CONFIG 覆盖。
-const PRODUCT_CONFIG = process.env.WORKBUDDY_PRODUCT_CONFIG
-  || path.join(process.env.WORKBUDDY_DIR || HOME, '.workbuddy', 'cache', 'acc-product-config-v3.json');
 
 // Model discovery runs on every cache refresh and is noise for normal use.
 // Set MODELS_DEBUG=1 to trace which source each model list came from.
@@ -106,18 +104,14 @@ function extractModels(obj, allowList = null) {
     }));
 }
 
-// 从桌面端缓存的云端 product config 读取（最新最全，新模型的唯一来源）
+// 从桌面端缓存的云端 product config 读取（最新最全，新模型与思考档位的唯一来源）
 function loadFromProductConfig() {
-  if (!fs.existsSync(PRODUCT_CONFIG)) return null;
-  try {
-    const content = JSON.parse(fs.readFileSync(PRODUCT_CONFIG, 'utf8'));
-    const models = extractModels(content.data || content, craftModelIds(content));
-    if (models.length > 0) {
-      log(`  [models] Loaded ${models.length} models from product config (${PRODUCT_CONFIG})`);
-      return models;
-    }
-  } catch (e) {
-    warn(`  [models] Failed to load ${PRODUCT_CONFIG}:`, e.message);
+  const resolved = resolveProductConfig();
+  if (!resolved) return null;
+  const models = extractModels(resolved.config, craftModelIds(resolved.config));
+  if (models.length > 0) {
+    log(`  [models] Loaded ${models.length} models from product config (${resolved.path})`);
+    return models;
   }
   return null;
 }

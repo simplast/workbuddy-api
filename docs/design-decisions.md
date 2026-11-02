@@ -65,7 +65,9 @@ CLI 版本探测为懒加载（首次请求时执行，不阻塞启动）。
 
 ## 模型加载优先级
 
-1. `~/.workbuddy/cache/acc-product-config-v3.json` — WorkBuddy 桌面端缓存的云端 product config（最新最全，glm-5.3 等只在这里），取 craft agent 的 `models` 白名单
+1. `~/.workbuddy/cache/acc-product-config-v3-<pid>-<uuid>.json` — WorkBuddy 桌面端缓存的云端 product config（最新最全，glm-5.3 等新模型与 deepseek-v4.1-flash 的 low/high/max 档位只在这里），取 craft agent 的 `models` 白名单
+
+   桌面端每个进程实例写一份快照，同一目录里还有 CLI 的 config（顶层无 `agents`，craft 白名单只有 9 个模型且 reasoning 是旧口径）。因此 `src/lib/product-config.js` 按内容筛出带 `agents` 的一份，再按 mtime 取最新；无后缀的固定文件名 `acc-product-config-v3.json` 从不落盘，不能作为读取路径。
 2. `~/.codebuddy/local_storage/` 中的云端缓存（按会话分片，支持 base64+gzip 压缩格式，可能过期）
 3. CLI 包目录下的 `product.internal.json` / `product.json`
 4. `src/builtin-models.json` — 随代码发布的兜底列表
