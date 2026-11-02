@@ -68,7 +68,8 @@ pid_of() {
 
 port_of() {
   local port
-  port="$(grep -E '^PORT=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 || true)"
+  port="$(grep -E '^PORT=' "$ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2 \
+    | cut -d'#' -f1 | tr -d '[:space:]' || true)"
   printf '%s\n' "${port:-3456}"
 }
 
@@ -183,8 +184,7 @@ do_doctor() {
   fi
 
   local port running
-  port="$(grep -E '^PORT=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 || true)"
-  port="${port:-3456}"
+  port="$(port_of)"
   running="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
   if [[ -z "$running" ]]; then
     echo "ok    port      $port free"
@@ -223,12 +223,21 @@ case "${1:-}" in
       [[ -f "$PLIST" ]] || render
       launchctl bootstrap "$DOMAIN" "$PLIST"
     fi
-    wait_ready && echo "started $LABEL"
+    if wait_ready; then
+      echo "started $LABEL"
+    else
+      die "started but /health is not answering — check 'bin/wb err'"
+    fi
     ;;
   stop) launchctl bootout "$TARGET" 2>/dev/null && echo "stopped $LABEL (until next login)" ;;
   disable) launchctl disable "$TARGET" && launchctl bootout "$TARGET" 2>/dev/null; echo "disabled $LABEL" ;;
   enable) launchctl enable "$TARGET" && echo "enabled $LABEL (start with: bin/wb start)" ;;
-  restart) launchctl kickstart -k "$TARGET" && wait_ready && echo "restarted $LABEL" ;;
+  restart)
+    is_loaded || die "not loaded — run 'bin/wb install' or 'bin/wb start'"
+    launchctl kickstart -k "$TARGET"
+    wait_ready || die "restarted but /health is not answering — check 'bin/wb err'"
+    echo "restarted $LABEL"
+    ;;
   status) do_status ;;
   logs) do_logs out "${@:2}" ;;
   err) do_logs error "${@:2}" ;;
