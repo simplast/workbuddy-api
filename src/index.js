@@ -66,6 +66,7 @@ app.get("/v1/models", (_req, res) => {
       supported_efforts: m.supportedEfforts,
       default_effort: m.defaultEffort,
       can_disable_thinking: m.canDisableThinking,
+      off_effort: m.offEffort,
     })),
   });
 });
@@ -78,11 +79,19 @@ app.get("/v1/models/pi-catalog", (req, res) => {
   const baseURL = `${req.protocol}://${req.get("host")}/v1`;
   const entries = models.map((m) => {
     // Pi 档位 → 上游档位值。上游未声明 supportedEfforts 时只保留开关（不写 map）。
+    //
+    // off 必须给一个真实的 provider 值：Pi 对 null 的处理是「不发 reasoning_effort」，
+    // 而上游收不到参数就照自己的默认档跑（hy4/hy3 默认 high），于是「关思考」实际
+    // 只是「按 high 思考」——一句话问候 30 秒的根源。
     const thinkingLevelMap = m.supportedEfforts
       ? Object.fromEntries(
           PI_THINKING_LEVELS.map((level) => [
             level,
-            m.supportedEfforts.includes(level) ? level : null,
+            level === "off"
+              ? m.offEffort ?? null
+              : m.supportedEfforts.includes(level)
+                ? level
+                : null,
           ]),
         )
       : undefined;

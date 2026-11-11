@@ -27,6 +27,9 @@ const LOCAL_STORAGE_DIR = path.join(CODEBUDDY_DIR, 'local_storage');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUILTIN_MODELS_PATH = path.join(__dirname, 'builtin-models.json');
 
+// 关闭思考时发给上游的档位值。见 extractModels 里的说明。
+const OFF_EFFORT = 'none';
+
 // Model discovery runs on every cache refresh and is noise for normal use.
 // Set MODELS_DEBUG=1 to trace which source each model list came from.
 export const MODELS_DEBUG = process.env.MODELS_DEBUG === '1';
@@ -101,6 +104,11 @@ function extractModels(obj, allowList = null) {
         : null,
       defaultEffort: m.reasoning?.defaultEffort ?? m.reasoning?.effort ?? null,
       canDisableThinking: m.reasoning?.canDisableThinking ?? null,
+      // 关思考用的 provider 值。product config 常把 canDisableThinking 写成 false
+      // （hy4/hy3 就是），但上游其实认 reasoning_effort: "none"——实测 hy4free 从
+      // 108 reasoning tokens 掉到 0；全量 15 个模型扫过一遍，"none" 从没把思考打开
+      // （要么真关，要么被忽略），所以对所有思考模型统一给 "none"。
+      offEffort: m.supportsReasoning ? OFF_EFFORT : null,
     }));
 }
 

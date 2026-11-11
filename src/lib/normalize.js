@@ -81,7 +81,7 @@ export function normalizeOpenAIMessages(messages) {
       parts.push(`${reasoningRenamed} assistant reasoning_content → reasoning`);
     if (reasoningDropped > 0)
       parts.push(`${reasoningDropped} empty reasoning_content dropped`);
-    logDiag("[normalize]", parts.join(", "));
+    //logDiag("[normalize]", parts.join(", "));
   }
 
   return messages;
